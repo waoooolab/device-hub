@@ -1,0 +1,10 @@
+{
+  "agent_id": "desktop-node-agent",
+  "platform": "macos",
+  "protocol_version": "v1",
+  "heartbeat_interval_seconds": 30,
+  "supported_capabilities": [
+    "compute.comfyui.local",
+    "storage.local_cache"
+  ]
+}

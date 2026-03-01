@@ -1,0 +1,11 @@
+{
+  "agent_id": "mobile-node-agent",
+  "platform": "ios",
+  "protocol_version": "v1",
+  "heartbeat_interval_seconds": 30,
+  "supported_capabilities": [
+    "camera.capture",
+    "screen.snapshot",
+    "location.read"
+  ]
+}
