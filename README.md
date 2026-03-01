@@ -13,3 +13,8 @@ Current baseline additions:
 - load-aware routing baseline (min load, lexical tiebreak)
 - device revoke flow removing routing eligibility
 - routed command envelope baseline preserving `trace_id`
+
+Testing:
+- `scripts/run_tests.py` runs all `tests/test_*.py` function tests.
+- `.github/workflows/device-hub-ci.yml` runs tests on PR/push across
+  Ubuntu/Windows/macOS with Python 3.11 and 3.12.
