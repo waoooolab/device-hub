@@ -59,3 +59,22 @@ def test_revoked_device_not_routable():
 
     svc.revoke_device("desktop-revoked")
     assert svc.route_capability("compute.comfyui.local") is None
+
+
+def test_route_command_preserves_trace_id():
+    svc = DeviceHubService()
+    svc.register_device("desktop-trace", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-trace")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-trace")
+
+    routed = svc.route_command(
+        capability="compute.comfyui.local",
+        command_type="tool.exec",
+        payload={"x": 1},
+        trace_id="trace-route-1",
+    )
+    assert routed is not None
+    assert routed["device_id"] == "desktop-trace"
+    assert routed["trace_id"] == "trace-route-1"
+    assert routed["command_type"] == "tool.exec"

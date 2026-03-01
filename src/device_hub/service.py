@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
+from uuid import uuid4
 
 from .devices.pairing import PairingManager, PairingRequest
 from .devices.registry import DeviceRecord, DeviceRegistry
@@ -48,3 +50,25 @@ class DeviceHubService:
             if rec and rec.paired and rec.status in {"paired", "online", "busy", "degraded"}:
                 active_ids.append(device_id)
         return choose_device(active_ids, load_by_device=load_by_device)
+
+    def route_command(
+        self,
+        *,
+        capability: str,
+        command_type: str,
+        payload: dict[str, Any],
+        trace_id: str,
+        load_by_device: dict[str, int] | None = None,
+    ) -> dict[str, Any] | None:
+        """Build a routed command envelope while preserving trace id."""
+        device_id = self.route_capability(capability, load_by_device=load_by_device)
+        if not device_id:
+            return None
+        return {
+            "command_id": f"cmd-{uuid4()}",
+            "command_type": command_type,
+            "device_id": device_id,
+            "capability": capability,
+            "trace_id": trace_id,
+            "payload": payload,
+        }
