@@ -1,4 +1,5 @@
 # device-hub
+[![CI](https://github.com/waoooolab/device-hub/actions/workflows/device-hub-ci.yml/badge.svg?branch=main)](https://github.com/waoooolab/device-hub/actions/workflows/device-hub-ci.yml)
 
 Device and resource management service.
 

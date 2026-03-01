@@ -1,4 +1,4 @@
-name: device-hub-ci
+name: CI
 
 on:
   push:
