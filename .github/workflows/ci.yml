@@ -26,6 +26,10 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .
 
+      - name: Boundary Import Guard
+        run: |
+          python scripts/check_boundary_imports.py --own-package device_hub
+
       - name: Run Tests
         run: |
           python scripts/run_tests.py
