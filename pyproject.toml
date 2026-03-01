@@ -7,7 +7,12 @@ name = "waoooolab-device-hub"
 version = "0.1.0"
 description = "Device and resource management service"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+  "fastapi>=0.110.0",
+  "httpx>=0.27.0",
+  "jsonschema>=4.22.0",
+  "uvicorn>=0.29.0",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

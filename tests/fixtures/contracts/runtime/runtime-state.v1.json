@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://waoooolab.dev/contracts/runtime/runtime-state.v1.json",
+  "title": "RuntimeStateV1",
+  "description": "Shared state enums for run/task/device lifecycle across runtime services.",
+  "type": "object",
+  "required": [
+    "run_status",
+    "task_status",
+    "device_status"
+  ],
+  "properties": {
+    "run_status": {
+      "type": "string",
+      "enum": [
+        "requested",
+        "queued",
+        "dispatching",
+        "running",
+        "waiting_approval",
+        "retrying",
+        "succeeded",
+        "failed",
+        "canceled",
+        "timed_out"
+      ]
+    },
+    "task_status": {
+      "type": "string",
+      "enum": [
+        "created",
+        "pending",
+        "leased",
+        "running",
+        "blocked",
+        "retrying",
+        "succeeded",
+        "failed",
+        "canceled",
+        "timed_out"
+      ]
+    },
+    "device_status": {
+      "type": "string",
+      "enum": [
+        "paired",
+        "online",
+        "busy",
+        "degraded",
+        "offline",
+        "revoked"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

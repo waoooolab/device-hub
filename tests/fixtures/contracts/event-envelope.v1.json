@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://waoooolab.dev/contracts/event-envelope.v1.json",
+  "title": "EventEnvelopeV1",
+  "type": "object",
+  "required": ["event_id", "event_type", "tenant_id", "app_id", "session_key", "trace_id", "correlation_id", "ts", "payload"],
+  "properties": {
+    "event_id": {"type": "string"},
+    "event_type": {"type": "string"},
+    "tenant_id": {"type": "string"},
+    "app_id": {"type": "string"},
+    "session_key": {"type": "string"},
+    "trace_id": {"type": "string"},
+    "correlation_id": {"type": "string"},
+    "ts": {"type": "string", "format": "date-time"},
+    "payload": {"type": "object"}
+  },
+  "additionalProperties": false
+}

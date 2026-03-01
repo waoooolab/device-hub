@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://waoooolab.dev/contracts/auth/token-claims.v1.json",
+  "title": "TokenClaimsV1",
+  "description": "Canonical claims contract used by runtime-gateway, runtime-execution, device-hub and downstream services.",
+  "type": "object",
+  "required": [
+    "iss",
+    "sub",
+    "aud",
+    "exp",
+    "iat",
+    "jti",
+    "tenant_id",
+    "app_id",
+    "scope",
+    "token_use",
+    "trace_id"
+  ],
+  "properties": {
+    "iss": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sub": {
+      "type": "string",
+      "minLength": 1
+    },
+    "aud": {
+      "description": "Audience can be one service or multiple accepted services.",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        }
+      ]
+    },
+    "exp": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "iat": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "nbf": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "jti": {
+      "type": "string",
+      "minLength": 8
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "app_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scope": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9_.:-]+$"
+      },
+      "minItems": 1
+    },
+    "token_use": {
+      "type": "string",
+      "enum": [
+        "access",
+        "refresh",
+        "service",
+        "device",
+        "exchange"
+      ]
+    },
+    "principal_type": {
+      "type": "string",
+      "enum": [
+        "user",
+        "service",
+        "device"
+      ]
+    },
+    "client_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "device_id": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "token_use": {
+            "const": "device"
+          }
+        },
+        "required": [
+          "token_use"
+        ]
+      },
+      "then": {
+        "required": [
+          "device_id"
+        ],
+        "properties": {
+          "principal_type": {
+            "const": "device"
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}
