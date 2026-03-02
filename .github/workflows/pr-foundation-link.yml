@@ -11,12 +11,12 @@ jobs:
     permissions:
       pull-requests: read
     steps:
-      - name: Validate TODO or Phase reference in PR body
+      - name: Validate PR governance fields
         uses: actions/github-script@v7
         with:
           script: |
             const body = (context.payload.pull_request.body || "").trim();
-            const patterns = [
+            const referencePatterns = [
               /FOUNDATION-TODO(?:\.md)?/i,
               /FOUNDATION-IMPLEMENTATION-PHASES(?:\.md)?/i,
               /docs\/todo\/FOUNDATION-TODO\.md/i,
@@ -24,9 +24,29 @@ jobs:
               /\bP\d+\.\d+\b/,
               /\bphase\s*exit\b/i,
             ];
-            const hasReference = patterns.some((pattern) => pattern.test(body));
+            const hasReference = referencePatterns.some((pattern) => pattern.test(body));
+            const hasGateDeclaration = /\bGate\s*:\s*(Convergence|Integration)\b/i.test(body);
+            const hasAtomicizationField =
+              /\bAtomicization\s*:\s*(done|pending|n\/a|not applicable)\b/i.test(body) ||
+              /原子化\s*:\s*(完成|待补|不适用)/i.test(body);
+
+            const errors = [];
             if (!hasReference) {
-              core.setFailed(
-                "PR body must reference at least one foundation TODO item or phase exit criterion. Example: 'TODO: P6.8' or 'Phase Exit: ...'."
+              errors.push(
+                "Missing foundation reference: include TODO/phase reference, for example 'TODO: P6.8' or 'Phase Exit: ...'."
               );
+            }
+            if (!hasGateDeclaration) {
+              errors.push(
+                "Missing gate declaration: add `Gate: Convergence` or `Gate: Integration`."
+              );
+            }
+            if (!hasAtomicizationField) {
+              errors.push(
+                "Missing atomicization field: add `Atomicization: done|pending|n/a`."
+              );
+            }
+
+            if (errors.length > 0) {
+              core.setFailed(errors.join("\n"));
             }
