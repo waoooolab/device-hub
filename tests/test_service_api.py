@@ -207,6 +207,269 @@ def test_route_command_selects_low_load_device() -> None:
     assert route.json()["payload"]["route"]["trace_id"] == "trace-device-1"
 
 
+def test_allocate_placement_returns_lease_acquired_event() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {
+                "device_id": "gpu-node-1",
+                "capabilities": ["compute.comfyui.local"],
+            }
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-1"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-1"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    response = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-alloc-1",
+                "task_id": "task-alloc-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "region": "us-west",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+                "load_by_device": {"gpu-node-1": 1},
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    event = response.json()
+    assert event["event_type"] == "device.lease.acquired"
+    assert event["payload"]["run_id"] == "run-alloc-1"
+    assert event["payload"]["task_id"] == "task-alloc-1"
+    assert event["payload"]["decision"]["outcome"] == "lease_acquired"
+    assert event["payload"]["decision"]["device_id"] == "gpu-node-1"
+    assert isinstance(event["payload"]["decision"]["lease_id"], str)
+    assert isinstance(event["payload"]["decision"]["lease_expires_at"], str)
+
+
+def test_allocate_placement_returns_route_rejected_event_when_no_device() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    response = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-alloc-2",
+                "task_id": "task-alloc-2",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "region": "us-west",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    event = response.json()
+    assert event["event_type"] == "device.route.rejected"
+    assert event["payload"]["decision"]["outcome"] == "rejected"
+    assert event["payload"]["decision"]["reason_code"] == "no_eligible_device"
+    assert "no eligible device" in event["payload"]["decision"]["reason"]
+
+
+def test_allocate_placement_rejects_invalid_execution_profile() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+    response = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-alloc-3",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "hosted_api",
+                    "resource_class": "llm_api",
+                    "placement_constraints": {"tenant_id": "t1"},
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+
+def test_release_placement_emits_lease_released_event() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {"device_id": "gpu-node-release", "capabilities": ["compute.comfyui.local"]}
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-release"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-release"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    allocate = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-release-1",
+                "task_id": "task-release-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    lease_id = allocate.json()["payload"]["decision"]["lease_id"]
+
+    release = client.post(
+        "/v1/placements/release",
+        json=_command_envelope(
+            {"lease_id": lease_id, "placement_request_id": f"lease:{lease_id}"},
+            command_type="device.placement.release",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert release.status_code == 200
+    event = release.json()
+    assert event["event_type"] == "device.lease.released"
+    assert event["payload"]["decision"]["outcome"] == "lease_released"
+    assert event["payload"]["decision"]["lease_id"] == lease_id
+
+
+def test_expire_placement_emits_lease_expired_event() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {"device_id": "gpu-node-expire", "capabilities": ["compute.comfyui.local"]}
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-expire"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-expire"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    allocate = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-expire-1",
+                "task_id": "task-expire-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    lease_id = allocate.json()["payload"]["decision"]["lease_id"]
+
+    expire = client.post(
+        "/v1/placements/expire",
+        json=_command_envelope(
+            {"lease_id": lease_id, "reason_code": "ttl_expired"},
+            command_type="device.placement.expire",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert expire.status_code == 200
+    event = expire.json()
+    assert event["event_type"] == "device.lease.expired"
+    assert event["payload"]["decision"]["outcome"] == "lease_expired"
+    assert event["payload"]["decision"]["lease_id"] == lease_id
+    assert event["payload"]["decision"]["reason_code"] == "ttl_expired"
+
+
+def test_release_placement_returns_404_for_unknown_lease() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+    response = client.post(
+        "/v1/placements/release",
+        json=_command_envelope({"lease_id": "lease-missing"}, command_type="device.placement.release"),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
 def test_get_device_requires_read_scope() -> None:
     client = _setup_test_env()
     write_token = _token(["devices:write"])

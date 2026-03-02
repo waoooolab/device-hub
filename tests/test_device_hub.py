@@ -78,3 +78,47 @@ def test_route_command_preserves_trace_id():
     assert routed["device_id"] == "desktop-trace"
     assert routed["trace_id"] == "trace-route-1"
     assert routed["command_type"] == "tool.exec"
+
+
+def test_allocate_placement_returns_rejected_when_no_candidate():
+    svc = DeviceHubService()
+    decision = svc.allocate_placement(
+        run_id="run-1",
+        task_id="task-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-1",
+    )
+    assert decision["outcome"] == "rejected"
+    assert decision["reason_code"] == "no_eligible_device"
+
+
+def test_release_and_expire_lease_lifecycle():
+    svc = DeviceHubService()
+    svc.register_device("desktop-lease", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-lease")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-lease")
+
+    allocated = svc.allocate_placement(
+        run_id="run-lease",
+        task_id="task-lease",
+        capability="compute.comfyui.local",
+        trace_id="trace-lease",
+    )
+    assert allocated["outcome"] == "lease_acquired"
+    lease_id = allocated["lease_id"]
+
+    released = svc.release_lease(lease_id)
+    assert released["outcome"] == "lease_released"
+    assert released["lease_id"] == lease_id
+
+    allocated2 = svc.allocate_placement(
+        run_id="run-lease-2",
+        task_id="task-lease-2",
+        capability="compute.comfyui.local",
+        trace_id="trace-lease-2",
+    )
+    lease_id2 = allocated2["lease_id"]
+    expired = svc.expire_lease(lease_id2, reason_code="ttl_expired")
+    assert expired["outcome"] == "lease_expired"
+    assert expired["reason_code"] == "ttl_expired"

@@ -1,0 +1,312 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://waoooolab.dev/contracts/runtime/device-route-event.v1.json",
+  "title": "DeviceRouteEventV1",
+  "description": "Device placement and lease lifecycle events emitted by device-hub.",
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_type",
+    "tenant_id",
+    "app_id",
+    "session_key",
+    "trace_id",
+    "correlation_id",
+    "ts",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "device.route.selected",
+        "device.route.rejected",
+        "device.lease.acquired",
+        "device.lease.released",
+        "device.lease.expired"
+      ]
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "app_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "correlation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "task_id",
+        "placement_request_id",
+        "decision"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "placement_request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decision": {
+          "type": "object",
+          "required": [
+            "outcome"
+          ],
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "selected",
+                "rejected",
+                "lease_acquired",
+                "lease_released",
+                "lease_expired"
+              ]
+            },
+            "device_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "lease_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "lease_expires_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "reason_code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            },
+            "capability_match": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "uniqueItems": true
+            },
+            "score": {
+              "type": "number",
+              "minimum": 0
+            },
+            "resource_snapshot": {
+              "type": "object",
+              "properties": {
+                "gpu_memory_free_mb": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "gpu_utilization_percent": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                "queue_depth": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "device.route.selected"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "decision": {
+                "required": [
+                  "device_id",
+                  "capability_match"
+                ],
+                "properties": {
+                  "outcome": {
+                    "const": "selected"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "device.route.rejected"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "decision": {
+                "required": [
+                  "reason_code",
+                  "reason"
+                ],
+                "properties": {
+                  "outcome": {
+                    "const": "rejected"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "device.lease.acquired"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "decision": {
+                "required": [
+                  "device_id",
+                  "lease_id",
+                  "lease_expires_at"
+                ],
+                "properties": {
+                  "outcome": {
+                    "const": "lease_acquired"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "device.lease.released"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "decision": {
+                "required": [
+                  "device_id",
+                  "lease_id"
+                ],
+                "properties": {
+                  "outcome": {
+                    "const": "lease_released"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "device.lease.expired"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "decision": {
+                "required": [
+                  "device_id",
+                  "lease_id",
+                  "reason_code"
+                ],
+                "properties": {
+                  "outcome": {
+                    "const": "lease_expired"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

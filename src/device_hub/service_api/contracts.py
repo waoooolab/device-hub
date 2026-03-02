@@ -73,3 +73,11 @@ def validate_runtime_device_status(status: str) -> None:
             "device_status": status,
         },
     )
+
+
+def validate_execution_profile_contract(payload: dict[str, Any]) -> None:
+    _validate("runtime/execution-profile.v1.json", payload)
+
+
+def validate_device_route_event_contract(payload: dict[str, Any]) -> None:
+    _validate("runtime/device-route-event.v1.json", payload)

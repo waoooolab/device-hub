@@ -19,6 +19,8 @@ Current baseline additions:
 
 Testing:
 - `scripts/run_tests.py` runs all `tests/test_*.py` function tests.
+- `scripts/check_code_shape.py` reports file/function size guardrails
+  (target fail: file>300/function>40; CI enforces this threshold).
 - `.github/workflows/ci.yml` runs tests on PR/push across
   Ubuntu/Windows/macOS with Python 3.11 and 3.12.
 

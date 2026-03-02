@@ -8,16 +8,25 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException
 
-from device_hub.devices.heartbeat import refresh_presence
 from device_hub.service import DeviceHubService
 
 from .auth import require_claims
 from .contracts import (
     ContractValidationError,
-    validate_command_envelope_contract,
-    validate_event_envelope_contract,
     validate_runtime_device_status,
-    validate_token_claims_contract,
+)
+from .placements import (
+    allocate_placement_response,
+    expire_placement_response,
+    release_placement_response,
+)
+from .routing import refresh_presence_response, route_command_response
+from .support import (
+    build_event as _build_event,
+    extract_payload as _extract_payload,
+    finalize_event as _finalize_event,
+    validate_read as _validate_read,
+    validate_write as _validate_write,
 )
 
 SERVICE_AUDIENCE = "device-hub"
@@ -27,54 +36,6 @@ DEVICES_READ_SCOPE = "devices:read"
 
 app = FastAPI(title="device-hub", version="0.1.0")
 _hub = DeviceHubService()
-
-
-def _extract_payload(envelope: dict[str, Any], *, required_fields: list[str]) -> dict[str, Any]:
-    payload = envelope.get("payload")
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=422, detail="payload must be object")
-
-    missing = [f for f in required_fields if f not in payload]
-    if missing:
-        raise HTTPException(status_code=422, detail=f"payload missing fields: {', '.join(missing)}")
-    return payload
-
-
-def _build_event(envelope: dict[str, Any], *, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "event_id": str(uuid4()),
-        "event_type": event_type,
-        "tenant_id": str(envelope["tenant_id"]),
-        "app_id": str(envelope["app_id"]),
-        "session_key": str(envelope["session_key"]),
-        "trace_id": str(envelope["trace_id"]),
-        "correlation_id": str(envelope.get("correlation_id") or envelope["command_id"]),
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "payload": payload,
-    }
-
-
-def _validate_write(envelope: dict[str, Any], claims: dict[str, Any]) -> None:
-    try:
-        validate_token_claims_contract(claims)
-        validate_command_envelope_contract(envelope)
-    except ContractValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-def _validate_read(claims: dict[str, Any]) -> None:
-    try:
-        validate_token_claims_contract(claims)
-    except ContractValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-def _finalize_event(event: dict[str, Any]) -> dict[str, Any]:
-    try:
-        validate_event_envelope_contract(event)
-    except ContractValidationError as exc:
-        raise HTTPException(status_code=500, detail=f"invalid device event: {exc}") from exc
-    return event
 
 
 @app.get("/healthz")
@@ -231,41 +192,7 @@ def refresh_device_presence(
         require_claims(audience=SERVICE_AUDIENCE, required_scope=DEVICES_WRITE_SCOPE)
     ),
 ) -> dict[str, Any]:
-    _validate_write(envelope, claims)
-    payload = _extract_payload(envelope, required_fields=["timeout_seconds"])
-
-    timeout_seconds = payload.get("timeout_seconds")
-    if not isinstance(timeout_seconds, int) or timeout_seconds < 1:
-        raise HTTPException(status_code=422, detail="payload.timeout_seconds must be integer >= 1")
-
-    before_offline = {
-        did
-        for did, rec in _hub.registry.devices.items()
-        if rec.status == "offline"
-    }
-    refresh_presence(_hub.registry, timeout_seconds=timeout_seconds)
-    after_offline = {
-        did
-        for did, rec in _hub.registry.devices.items()
-        if rec.status == "offline"
-    }
-    changed_to_offline = sorted(after_offline - before_offline)
-
-    for did in changed_to_offline:
-        rec = _hub.registry.devices.get(did)
-        if rec is not None:
-            validate_runtime_device_status(rec.status)
-
-    event = _build_event(
-        envelope,
-        event_type="device.presence.refreshed",
-        payload={
-            "timeout_seconds": timeout_seconds,
-            "updated_to_offline": changed_to_offline,
-            "updated_count": len(changed_to_offline),
-        },
-    )
-    return _finalize_event(event)
+    return refresh_presence_response(envelope=envelope, claims=claims, hub=_hub)
 
 
 @app.post("/v1/devices/route")
@@ -275,50 +202,37 @@ def route_command(
         require_claims(audience=SERVICE_AUDIENCE, required_scope=DEVICES_WRITE_SCOPE)
     ),
 ) -> dict[str, Any]:
-    _validate_write(envelope, claims)
-    payload = _extract_payload(
-        envelope,
-        required_fields=["capability", "command_type", "command_payload"],
-    )
+    return route_command_response(envelope=envelope, claims=claims, hub=_hub)
 
-    capability = payload.get("capability")
-    command_type = payload.get("command_type")
-    command_payload = payload.get("command_payload")
-    load_by_device = payload.get("load_by_device")
 
-    if not isinstance(capability, str) or not capability:
-        raise HTTPException(status_code=422, detail="payload.capability must be non-empty string")
-    if not isinstance(command_type, str) or not command_type:
-        raise HTTPException(status_code=422, detail="payload.command_type must be non-empty string")
-    if not isinstance(command_payload, dict):
-        raise HTTPException(status_code=422, detail="payload.command_payload must be object")
-    if load_by_device is not None and (
-        not isinstance(load_by_device, dict)
-        or any(not isinstance(k, str) or not isinstance(v, int) for k, v in load_by_device.items())
-    ):
-        raise HTTPException(status_code=422, detail="payload.load_by_device must be {device_id: int}")
+@app.post("/v1/placements/allocate")
+def allocate_placement(
+    envelope: dict[str, Any],
+    claims: dict[str, Any] = Depends(
+        require_claims(audience=SERVICE_AUDIENCE, required_scope=DEVICES_WRITE_SCOPE)
+    ),
+) -> dict[str, Any]:
+    return allocate_placement_response(envelope=envelope, claims=claims, hub=_hub)
 
-    routed = _hub.route_command(
-        capability=capability,
-        command_type=command_type,
-        payload=command_payload,
-        trace_id=str(envelope["trace_id"]),
-        load_by_device=load_by_device,
-    )
-    if routed is None:
-        event = _build_event(
-            envelope,
-            event_type="device.route.miss",
-            payload={"capability": capability, "reason": "no_eligible_device"},
-        )
-        return _finalize_event(event)
 
-    event = _build_event(
-        envelope,
-        event_type="device.route.selected",
-        payload={"route": routed},
-    )
-    return _finalize_event(event)
+@app.post("/v1/placements/release")
+def release_placement(
+    envelope: dict[str, Any],
+    claims: dict[str, Any] = Depends(
+        require_claims(audience=SERVICE_AUDIENCE, required_scope=DEVICES_WRITE_SCOPE)
+    ),
+) -> dict[str, Any]:
+    return release_placement_response(envelope=envelope, claims=claims, hub=_hub)
+
+
+@app.post("/v1/placements/expire")
+def expire_placement(
+    envelope: dict[str, Any],
+    claims: dict[str, Any] = Depends(
+        require_claims(audience=SERVICE_AUDIENCE, required_scope=DEVICES_WRITE_SCOPE)
+    ),
+) -> dict[str, Any]:
+    return expire_placement_response(envelope=envelope, claims=claims, hub=_hub)
 
 
 @app.get("/v1/devices/{device_id}")

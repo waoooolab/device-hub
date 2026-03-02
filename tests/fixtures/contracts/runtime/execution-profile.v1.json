@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://waoooolab.dev/contracts/runtime/execution-profile.v1.json",
+  "title": "ExecutionProfileV1",
+  "description": "Contract-driven routing input for runtime execution decisions.",
+  "type": "object",
+  "required": [
+    "execution_mode",
+    "inference_target",
+    "resource_class"
+  ],
+  "properties": {
+    "execution_mode": {
+      "type": "string",
+      "enum": [
+        "control",
+        "compute"
+      ]
+    },
+    "inference_target": {
+      "type": "string",
+      "enum": [
+        "hosted_api",
+        "local_endpoint",
+        "none"
+      ]
+    },
+    "resource_class": {
+      "type": "string",
+      "enum": [
+        "cpu",
+        "llm_api",
+        "gpu"
+      ]
+    },
+    "placement_constraints": {
+      "type": "object",
+      "properties": {
+        "tenant_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "app_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "region": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cost_tier": {
+          "type": "string",
+          "enum": [
+            "low",
+            "balanced",
+            "high"
+          ]
+        },
+        "prefer_local": {
+          "type": "boolean"
+        },
+        "max_cost_usd_hard": {
+          "type": "number",
+          "minimum": 0
+        },
+        "node_pool": {
+          "type": "string",
+          "minLength": 1
+        },
+        "required_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "avoid_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "execution_mode": {
+            "const": "compute"
+          }
+        },
+        "required": [
+          "execution_mode"
+        ]
+      },
+      "then": {
+        "required": [
+          "placement_constraints"
+        ],
+        "properties": {
+          "resource_class": {
+            "const": "gpu"
+          },
+          "inference_target": {
+            "enum": [
+              "none",
+              "local_endpoint"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resource_class": {
+            "const": "cpu"
+          }
+        },
+        "required": [
+          "resource_class"
+        ]
+      },
+      "then": {
+        "properties": {
+          "inference_target": {
+            "const": "none"
+          },
+          "execution_mode": {
+            "const": "control"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resource_class": {
+            "const": "llm_api"
+          }
+        },
+        "required": [
+          "resource_class"
+        ]
+      },
+      "then": {
+        "properties": {
+          "inference_target": {
+            "enum": [
+              "hosted_api",
+              "local_endpoint"
+            ]
+          },
+          "execution_mode": {
+            "const": "control"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "inference_target": {
+            "const": "hosted_api"
+          }
+        },
+        "required": [
+          "inference_target"
+        ]
+      },
+      "then": {
+        "properties": {
+          "resource_class": {
+            "const": "llm_api"
+          },
+          "execution_mode": {
+            "const": "control"
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}
