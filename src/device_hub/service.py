@@ -139,6 +139,32 @@ class DeviceHubService:
             "payload": payload,
         }
 
+    def placement_capacity_snapshot(self) -> dict[str, Any]:
+        total_devices = len(self.registry.devices)
+        eligible_devices = 0
+        for rec in self.registry.devices.values():
+            if rec.paired and rec.status in {"paired", "online", "busy", "degraded"}:
+                eligible_devices += 1
+
+        active_leases = 0
+        for lease in self.leases.values():
+            if lease.status == "active":
+                active_leases += 1
+
+        available_slots = max(eligible_devices - active_leases, 0)
+        if eligible_devices > 0:
+            lease_utilization = min(1.0, active_leases / eligible_devices)
+        else:
+            lease_utilization = 1.0
+        return {
+            "total_devices": total_devices,
+            "eligible_devices": eligible_devices,
+            "active_leases": active_leases,
+            "available_slots": available_slots,
+            "lease_utilization": lease_utilization,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+
     def allocate_placement(
         self,
         *,

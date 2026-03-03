@@ -328,6 +328,80 @@ def test_allocate_placement_rejects_invalid_execution_profile() -> None:
     assert response.status_code == 422
 
 
+def test_get_placement_capacity_requires_read_scope() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write"])
+    response = client.get(
+        "/v1/placements/capacity",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+def test_get_placement_capacity_returns_snapshot() -> None:
+    client = _setup_test_env()
+    write_token = _token(["devices:write"])
+    read_token = _token(["devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {
+                "device_id": "gpu-node-capacity",
+                "capabilities": ["compute.comfyui.local"],
+            }
+        ),
+        headers={"Authorization": f"Bearer {write_token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-capacity"}),
+        headers={"Authorization": f"Bearer {write_token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {write_token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-capacity"}),
+        headers={"Authorization": f"Bearer {write_token}"},
+    )
+    client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-capacity-1",
+                "task_id": "task-capacity-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {write_token}"},
+    )
+
+    response = client.get(
+        "/v1/placements/capacity",
+        headers={"Authorization": f"Bearer {read_token}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["eligible_devices"] >= 1
+    assert payload["active_leases"] >= 1
+    assert payload["available_slots"] >= 0
+    assert 0.0 <= payload["lease_utilization"] <= 1.0
+
+
 def test_release_placement_emits_lease_released_event() -> None:
     client = _setup_test_env()
     token = _token(["devices:write", "devices:read"])

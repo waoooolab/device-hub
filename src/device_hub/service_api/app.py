@@ -235,6 +235,16 @@ def expire_placement(
     return expire_placement_response(envelope=envelope, claims=claims, hub=_hub)
 
 
+@app.get("/v1/placements/capacity")
+def get_placement_capacity(
+    claims: dict[str, Any] = Depends(
+        require_claims(audience=SERVICE_AUDIENCE, required_scope=DEVICES_READ_SCOPE)
+    ),
+) -> dict[str, Any]:
+    _validate_read(claims)
+    return _hub.placement_capacity_snapshot()
+
+
 @app.get("/v1/devices/{device_id}")
 def get_device(
     device_id: str,
