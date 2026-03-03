@@ -6,7 +6,7 @@ on:
 
 jobs:
   test:
-    uses: waoooolab/openwaoooo/.github/workflows/service-python-ci-reusable.yml@main
+    uses: waoooolab/openwaoooo/.github/workflows/service-python-ci-reusable.yml@0b3ff9b6ba8762600c275df0d35dee4bc81c7d0a
     with:
       own_package: device_hub
       install_command: |
