@@ -22,6 +22,7 @@ class LeaseRecord:
     capability: str
     trace_id: str
     lease_expires_at: str
+    tenant_id: str | None = None
     status: str = "active"
     released_at: str | None = None
     expired_at: str | None = None
@@ -34,6 +35,7 @@ class DeviceHubService:
     capabilities: CapabilityRegistry = field(default_factory=CapabilityRegistry)
     pairing: PairingManager = field(default_factory=PairingManager)
     leases: dict[str, LeaseRecord] = field(default_factory=dict)
+    max_active_leases_per_tenant: int | None = None
 
     @staticmethod
     def _rejected_placement(run_id: str, task_id: str, capability: str) -> dict[str, Any]:
@@ -70,6 +72,30 @@ class DeviceHubService:
         }
 
     @staticmethod
+    def _rejected_tenant_quota(
+        run_id: str,
+        task_id: str,
+        capability: str,
+        *,
+        tenant_id: str,
+        tenant_active_leases: int,
+        tenant_limit: int,
+    ) -> dict[str, Any]:
+        return {
+            "run_id": run_id,
+            "task_id": task_id,
+            "outcome": "rejected",
+            "reason_code": "tenant_quota_exhausted",
+            "reason": f"tenant '{tenant_id}' reached active lease limit {tenant_limit}",
+            "capability_match": [capability],
+            "resource_snapshot": {
+                "tenant_id": tenant_id,
+                "tenant_active_leases": tenant_active_leases,
+                "tenant_limit": tenant_limit,
+            },
+        }
+
+    @staticmethod
     def _lease_expiry(lease_ttl_seconds: int) -> str:
         ttl_seconds = max(30, lease_ttl_seconds)
         return (datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)).isoformat()
@@ -93,6 +119,7 @@ class DeviceHubService:
         trace_id: str,
         device_id: str,
         lease_ttl_seconds: int,
+        tenant_id: str | None = None,
     ) -> dict[str, Any]:
         self.registry.mark_busy(device_id)
         lease_id = f"lease-{uuid4()}"
@@ -105,6 +132,7 @@ class DeviceHubService:
             capability=capability,
             trace_id=trace_id,
             lease_expires_at=lease_expires_at,
+            tenant_id=tenant_id,
         )
         return {
             "run_id": run_id,
@@ -156,6 +184,16 @@ class DeviceHubService:
 
     def _active_lease_device_ids(self) -> set[str]:
         return {lease.device_id for lease in self.leases.values() if lease.status == "active"}
+
+    def _active_lease_count_for_tenant(self, tenant_id: str) -> int:
+        normalized = tenant_id.strip()
+        if not normalized:
+            return 0
+        return sum(
+            1
+            for lease in self.leases.values()
+            if lease.status == "active" and lease.tenant_id == normalized
+        )
 
     def _expire_due_leases(self) -> int:
         now = datetime.now(timezone.utc)
@@ -232,12 +270,26 @@ class DeviceHubService:
         trace_id: str,
         load_by_device: dict[str, int] | None = None,
         lease_ttl_seconds: int = 300,
+        tenant_id: str | None = None,
     ) -> dict[str, Any]:
         """Select a device and mint a short-lived lease descriptor."""
         self._expire_due_leases()
         eligible_ids = self._eligible_devices_for_capability(capability)
         if not eligible_ids:
             return self._rejected_placement(run_id, task_id, capability)
+        normalized_tenant_id = tenant_id.strip() if isinstance(tenant_id, str) else ""
+        tenant_limit = self.max_active_leases_per_tenant
+        if tenant_limit is not None and tenant_limit > 0 and normalized_tenant_id:
+            tenant_active_leases = self._active_lease_count_for_tenant(normalized_tenant_id)
+            if tenant_active_leases >= tenant_limit:
+                return self._rejected_tenant_quota(
+                    run_id,
+                    task_id,
+                    capability,
+                    tenant_id=normalized_tenant_id,
+                    tenant_active_leases=tenant_active_leases,
+                    tenant_limit=tenant_limit,
+                )
         active_lease_devices = self._active_lease_device_ids()
         available_ids = [device_id for device_id in eligible_ids if device_id not in active_lease_devices]
         if not available_ids:
@@ -258,6 +310,7 @@ class DeviceHubService:
             trace_id=trace_id,
             device_id=device_id,
             lease_ttl_seconds=lease_ttl_seconds,
+            tenant_id=normalized_tenant_id or None,
         )
 
     def release_lease(self, lease_id: str) -> dict[str, Any]:
@@ -332,6 +385,7 @@ class DeviceHubService:
             "capability": lease.capability,
             "trace_id": lease.trace_id,
             "lease_expires_at": lease.lease_expires_at,
+            "tenant_id": lease.tenant_id,
             "status": lease.status,
             "released_at": lease.released_at,
             "expired_at": lease.expired_at,

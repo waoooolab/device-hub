@@ -59,7 +59,7 @@ def _allocation_decision_payload(decision: dict[str, Any], capability: str) -> d
 
 def _placement_request(
     payload: dict[str, Any],
-) -> tuple[str, str, dict[str, Any], dict[str, int] | None, int]:
+) -> tuple[str, str, dict[str, Any], dict[str, int] | None, int, str | None]:
     run_id = payload.get("run_id")
     task_id = payload.get("task_id", f"{run_id}:root")
     execution_profile = payload.get("execution_profile")
@@ -74,7 +74,14 @@ def _placement_request(
     _validate_load_by_device(load_by_device)
     if not isinstance(lease_ttl_seconds, int) or lease_ttl_seconds < 30 or lease_ttl_seconds > 3600:
         raise HTTPException(status_code=422, detail="payload.lease_ttl_seconds must be integer in [30, 3600]")
-    return run_id, task_id, execution_profile, load_by_device, lease_ttl_seconds
+    tenant_id: str | None = None
+    constraints = execution_profile.get("placement_constraints")
+    if isinstance(constraints, dict):
+        raw_tenant_id = constraints.get("tenant_id")
+        if isinstance(raw_tenant_id, str):
+            normalized = raw_tenant_id.strip()
+            tenant_id = normalized or None
+    return run_id, task_id, execution_profile, load_by_device, lease_ttl_seconds, tenant_id
 
 
 def _validate_execution_profile(profile: dict[str, Any]) -> None:
@@ -113,7 +120,7 @@ def allocate_placement_response(
 ) -> dict[str, Any]:
     validate_write(envelope, claims)
     payload = extract_payload(envelope, required_fields=["run_id", "execution_profile"])
-    run_id, task_id, execution_profile, load_by_device, lease_ttl_seconds = _placement_request(payload)
+    run_id, task_id, execution_profile, load_by_device, lease_ttl_seconds, tenant_id = _placement_request(payload)
     _validate_execution_profile(execution_profile)
     capability = resolve_placement_capability(payload)
     decision = hub.allocate_placement(
@@ -123,6 +130,7 @@ def allocate_placement_response(
         trace_id=str(envelope["trace_id"]),
         load_by_device=load_by_device,
         lease_ttl_seconds=lease_ttl_seconds,
+        tenant_id=tenant_id,
     )
     event = _allocation_event(
         envelope,

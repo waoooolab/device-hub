@@ -149,6 +149,49 @@ def test_allocate_placement_rejects_when_capacity_is_exhausted() -> None:
     assert second["reason_code"] == "capacity_exhausted"
 
 
+def test_allocate_placement_rejects_when_tenant_quota_is_exhausted() -> None:
+    svc = DeviceHubService(max_active_leases_per_tenant=1)
+    svc.register_device("desktop-quota-a", ["compute.comfyui.local"])
+    svc.register_device("desktop-quota-b", ["compute.comfyui.local"])
+    req_a = svc.request_pairing("desktop-quota-a")
+    req_b = svc.request_pairing("desktop-quota-b")
+    svc.approve_pairing(req_a.code)
+    svc.approve_pairing(req_b.code)
+    svc.receive_heartbeat("desktop-quota-a")
+    svc.receive_heartbeat("desktop-quota-b")
+
+    first = svc.allocate_placement(
+        run_id="run-quota-1",
+        task_id="task-quota-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-quota-1",
+        tenant_id="t1",
+    )
+    assert first["outcome"] == "lease_acquired"
+
+    second = svc.allocate_placement(
+        run_id="run-quota-2",
+        task_id="task-quota-2",
+        capability="compute.comfyui.local",
+        trace_id="trace-quota-2",
+        tenant_id="t1",
+    )
+    assert second["outcome"] == "rejected"
+    assert second["reason_code"] == "tenant_quota_exhausted"
+    assert second["resource_snapshot"]["tenant_id"] == "t1"
+    assert second["resource_snapshot"]["tenant_active_leases"] == 1
+    assert second["resource_snapshot"]["tenant_limit"] == 1
+
+    third = svc.allocate_placement(
+        run_id="run-quota-3",
+        task_id="task-quota-3",
+        capability="compute.comfyui.local",
+        trace_id="trace-quota-3",
+        tenant_id="t2",
+    )
+    assert third["outcome"] == "lease_acquired"
+
+
 def test_capacity_snapshot_expires_stale_active_lease() -> None:
     svc = DeviceHubService()
     svc.register_device("desktop-stale-lease", ["compute.comfyui.local"])
