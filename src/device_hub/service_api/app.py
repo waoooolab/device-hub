@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 from typing import Any
 from uuid import uuid4
 
@@ -32,10 +33,29 @@ from .support import (
 SERVICE_AUDIENCE = "device-hub"
 DEVICES_WRITE_SCOPE = "devices:write"
 DEVICES_READ_SCOPE = "devices:read"
+TENANT_LEASE_LIMIT_ENV = "WAOOOOLAB_DEVICE_HUB_MAX_ACTIVE_LEASES_PER_TENANT"
+
+
+def _max_active_leases_per_tenant_from_env() -> int | None:
+    raw = os.environ.get(TENANT_LEASE_LIMIT_ENV)
+    if raw is None:
+        return None
+    normalized = raw.strip()
+    if not normalized:
+        return None
+    try:
+        value = int(normalized)
+    except ValueError as exc:
+        raise RuntimeError(f"{TENANT_LEASE_LIMIT_ENV} must be integer") from exc
+    if value <= 0:
+        raise RuntimeError(f"{TENANT_LEASE_LIMIT_ENV} must be > 0")
+    return value
 
 
 app = FastAPI(title="device-hub", version="0.1.0")
-_hub = DeviceHubService()
+_hub = DeviceHubService(
+    max_active_leases_per_tenant=_max_active_leases_per_tenant_from_env()
+)
 
 
 @app.get("/healthz")
