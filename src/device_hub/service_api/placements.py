@@ -121,6 +121,11 @@ def allocate_placement_response(
     validate_write(envelope, claims)
     payload = extract_payload(envelope, required_fields=["run_id", "execution_profile"])
     run_id, task_id, execution_profile, load_by_device, lease_ttl_seconds, tenant_id = _placement_request(payload)
+    if tenant_id is None:
+        raw_envelope_tenant_id = envelope.get("tenant_id")
+        if isinstance(raw_envelope_tenant_id, str):
+            normalized = raw_envelope_tenant_id.strip()
+            tenant_id = normalized or None
     _validate_execution_profile(execution_profile)
     capability = resolve_placement_capability(payload)
     decision = hub.allocate_placement(
