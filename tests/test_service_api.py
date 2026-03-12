@@ -533,6 +533,158 @@ def test_expire_placement_emits_lease_expired_event() -> None:
     assert event["payload"]["decision"]["reason_code"] == "ttl_expired"
 
 
+def test_release_placement_is_idempotent_for_repeated_release() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    _ = client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {"device_id": "gpu-node-release-idem", "capabilities": ["compute.comfyui.local"]}
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-release-idem"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    _ = client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    _ = client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-release-idem"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    allocate = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-release-idem-1",
+                "task_id": "task-release-idem-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    lease_id = allocate.json()["payload"]["decision"]["lease_id"]
+
+    first_release = client.post(
+        "/v1/placements/release",
+        json=_command_envelope(
+            {"lease_id": lease_id, "placement_request_id": f"lease:{lease_id}"},
+            command_type="device.placement.release",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    second_release = client.post(
+        "/v1/placements/release",
+        json=_command_envelope(
+            {"lease_id": lease_id, "placement_request_id": f"lease:{lease_id}"},
+            command_type="device.placement.release",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert first_release.status_code == 200
+    assert second_release.status_code == 200
+    assert first_release.json()["event_type"] == "device.lease.released"
+    assert second_release.json()["event_type"] == "device.lease.released"
+    assert first_release.json()["payload"]["decision"]["lease_id"] == lease_id
+    assert second_release.json()["payload"]["decision"]["lease_id"] == lease_id
+
+
+def test_expire_placement_is_idempotent_for_repeated_expire() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    _ = client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {"device_id": "gpu-node-expire-idem", "capabilities": ["compute.comfyui.local"]}
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-expire-idem"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    _ = client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    _ = client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-expire-idem"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    allocate = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-expire-idem-1",
+                "task_id": "task-expire-idem-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    lease_id = allocate.json()["payload"]["decision"]["lease_id"]
+
+    first_expire = client.post(
+        "/v1/placements/expire",
+        json=_command_envelope(
+            {"lease_id": lease_id, "reason_code": "ttl_expired"},
+            command_type="device.placement.expire",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    second_expire = client.post(
+        "/v1/placements/expire",
+        json=_command_envelope(
+            {"lease_id": lease_id, "reason_code": "operator_retry"},
+            command_type="device.placement.expire",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert first_expire.status_code == 200
+    assert second_expire.status_code == 200
+    assert first_expire.json()["event_type"] == "device.lease.expired"
+    assert second_expire.json()["event_type"] == "device.lease.expired"
+    assert first_expire.json()["payload"]["decision"]["lease_id"] == lease_id
+    assert second_expire.json()["payload"]["decision"]["lease_id"] == lease_id
+    assert first_expire.json()["payload"]["decision"]["reason_code"] == "ttl_expired"
+    assert second_expire.json()["payload"]["decision"]["reason_code"] == "ttl_expired"
+
+
 def test_release_placement_returns_404_for_unknown_lease() -> None:
     client = _setup_test_env()
     token = _token(["devices:write", "devices:read"])
