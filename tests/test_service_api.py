@@ -306,6 +306,86 @@ def test_allocate_placement_returns_route_rejected_event_when_no_device() -> Non
     assert "no eligible device" in event["payload"]["decision"]["reason"]
 
 
+def test_allocate_placement_returns_route_rejected_event_when_capacity_exhausted() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {
+                "device_id": "gpu-node-capacity-reject",
+                "capabilities": ["compute.comfyui.local"],
+            }
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-capacity-reject"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-capacity-reject"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    first = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-capacity-reject-1",
+                "task_id": "task-capacity-reject-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert first.status_code == 200
+    assert first.json()["event_type"] == "device.lease.acquired"
+
+    second = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-capacity-reject-2",
+                "task_id": "task-capacity-reject-2",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert second.status_code == 200
+    event = second.json()
+    assert event["event_type"] == "device.route.rejected"
+    assert event["payload"]["decision"]["reason_code"] == "capacity_exhausted"
+
+
 def test_allocate_placement_rejects_invalid_execution_profile() -> None:
     client = _setup_test_env()
     token = _token(["devices:write", "devices:read"])

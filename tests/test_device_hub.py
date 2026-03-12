@@ -122,3 +122,52 @@ def test_release_and_expire_lease_lifecycle():
     expired = svc.expire_lease(lease_id2, reason_code="ttl_expired")
     assert expired["outcome"] == "lease_expired"
     assert expired["reason_code"] == "ttl_expired"
+
+
+def test_allocate_placement_rejects_when_capacity_is_exhausted() -> None:
+    svc = DeviceHubService()
+    svc.register_device("desktop-capacity", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-capacity")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-capacity")
+
+    first = svc.allocate_placement(
+        run_id="run-capacity-1",
+        task_id="task-capacity-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-capacity-1",
+    )
+    assert first["outcome"] == "lease_acquired"
+
+    second = svc.allocate_placement(
+        run_id="run-capacity-2",
+        task_id="task-capacity-2",
+        capability="compute.comfyui.local",
+        trace_id="trace-capacity-2",
+    )
+    assert second["outcome"] == "rejected"
+    assert second["reason_code"] == "capacity_exhausted"
+
+
+def test_capacity_snapshot_expires_stale_active_lease() -> None:
+    svc = DeviceHubService()
+    svc.register_device("desktop-stale-lease", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-stale-lease")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-stale-lease")
+
+    allocated = svc.allocate_placement(
+        run_id="run-stale-lease",
+        task_id="task-stale-lease",
+        capability="compute.comfyui.local",
+        trace_id="trace-stale-lease",
+    )
+    lease_id = allocated["lease_id"]
+    lease = svc.leases[lease_id]
+    lease.lease_expires_at = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+
+    snapshot = svc.placement_capacity_snapshot()
+    assert snapshot["active_leases"] == 0
+    assert snapshot["available_slots"] >= 1
+    assert svc.leases[lease_id].status == "expired"
+    assert svc.leases[lease_id].expire_reason_code == "ttl_expired"

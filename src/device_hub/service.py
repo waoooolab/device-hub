@@ -47,9 +47,42 @@ class DeviceHubService:
         }
 
     @staticmethod
+    def _rejected_capacity(
+        run_id: str,
+        task_id: str,
+        capability: str,
+        *,
+        eligible_devices: int,
+        active_leases: int,
+    ) -> dict[str, Any]:
+        return {
+            "run_id": run_id,
+            "task_id": task_id,
+            "outcome": "rejected",
+            "reason_code": "capacity_exhausted",
+            "reason": "all eligible devices are occupied by active leases",
+            "capability_match": [capability],
+            "resource_snapshot": {
+                "eligible_devices": eligible_devices,
+                "active_leases": active_leases,
+                "available_slots": max(eligible_devices - active_leases, 0),
+            },
+        }
+
+    @staticmethod
     def _lease_expiry(lease_ttl_seconds: int) -> str:
         ttl_seconds = max(30, lease_ttl_seconds)
         return (datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)).isoformat()
+
+    @staticmethod
+    def _parse_iso_datetime(raw: str) -> datetime | None:
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
 
     def _acquired_placement(
         self,
@@ -109,13 +142,37 @@ class DeviceHubService:
     def route_capability(
         self, capability: str, load_by_device: dict[str, int] | None = None
     ) -> str | None:
+        candidate_ids = self._eligible_devices_for_capability(capability)
+        return choose_device(candidate_ids, load_by_device=load_by_device)
+
+    def _eligible_devices_for_capability(self, capability: str) -> list[str]:
         candidate_ids = self.capabilities.candidates(capability)
         active_ids: list[str] = []
         for device_id in candidate_ids:
             rec = self.registry.devices.get(device_id)
             if rec and rec.paired and rec.status in {"paired", "online", "busy", "degraded"}:
                 active_ids.append(device_id)
-        return choose_device(active_ids, load_by_device=load_by_device)
+        return active_ids
+
+    def _active_lease_device_ids(self) -> set[str]:
+        return {lease.device_id for lease in self.leases.values() if lease.status == "active"}
+
+    def _expire_due_leases(self) -> int:
+        now = datetime.now(timezone.utc)
+        expired_count = 0
+        for lease in self.leases.values():
+            if lease.status != "active":
+                continue
+            expires_at = self._parse_iso_datetime(lease.lease_expires_at)
+            if expires_at is None or expires_at > now:
+                continue
+            lease.status = "expired"
+            lease.expired_at = now.isoformat()
+            lease.expire_reason_code = "ttl_expired"
+            if lease.device_id in self.registry.devices:
+                self.registry.heartbeat(lease.device_id)
+            expired_count += 1
+        return expired_count
 
     def route_command(
         self,
@@ -140,6 +197,7 @@ class DeviceHubService:
         }
 
     def placement_capacity_snapshot(self) -> dict[str, Any]:
+        self._expire_due_leases()
         total_devices = len(self.registry.devices)
         eligible_devices = 0
         for rec in self.registry.devices.values():
@@ -176,7 +234,21 @@ class DeviceHubService:
         lease_ttl_seconds: int = 300,
     ) -> dict[str, Any]:
         """Select a device and mint a short-lived lease descriptor."""
-        device_id = self.route_capability(capability, load_by_device=load_by_device)
+        self._expire_due_leases()
+        eligible_ids = self._eligible_devices_for_capability(capability)
+        if not eligible_ids:
+            return self._rejected_placement(run_id, task_id, capability)
+        active_lease_devices = self._active_lease_device_ids()
+        available_ids = [device_id for device_id in eligible_ids if device_id not in active_lease_devices]
+        if not available_ids:
+            return self._rejected_capacity(
+                run_id,
+                task_id,
+                capability,
+                eligible_devices=len(eligible_ids),
+                active_leases=len(active_lease_devices),
+            )
+        device_id = choose_device(available_ids, load_by_device=load_by_device)
         if not device_id:
             return self._rejected_placement(run_id, task_id, capability)
         return self._acquired_placement(
