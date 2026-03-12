@@ -245,6 +245,20 @@ def get_placement_capacity(
     return _hub.placement_capacity_snapshot()
 
 
+@app.get("/v1/placements/leases/{lease_id}")
+def get_placement_lease(
+    lease_id: str,
+    claims: dict[str, Any] = Depends(
+        require_claims(audience=SERVICE_AUDIENCE, required_scope=DEVICES_READ_SCOPE)
+    ),
+) -> dict[str, Any]:
+    _validate_read(claims)
+    try:
+        return _hub.get_lease_snapshot(lease_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.get("/v1/devices/{device_id}")
 def get_device(
     device_id: str,

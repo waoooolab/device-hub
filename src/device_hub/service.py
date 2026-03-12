@@ -316,3 +316,21 @@ class DeviceHubService:
             "lease_id": lease.lease_id,
             "reason_code": reason_code,
         }
+
+    def get_lease_snapshot(self, lease_id: str) -> dict[str, Any]:
+        lease = self.leases.get(lease_id)
+        if lease is None:
+            raise KeyError(f"lease not found: {lease_id}")
+        return {
+            "lease_id": lease.lease_id,
+            "run_id": lease.run_id,
+            "task_id": lease.task_id,
+            "device_id": lease.device_id,
+            "capability": lease.capability,
+            "trace_id": lease.trace_id,
+            "lease_expires_at": lease.lease_expires_at,
+            "status": lease.status,
+            "released_at": lease.released_at,
+            "expired_at": lease.expired_at,
+            "expire_reason_code": lease.expire_reason_code,
+        }

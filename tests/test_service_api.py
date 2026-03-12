@@ -482,6 +482,98 @@ def test_get_placement_capacity_returns_snapshot() -> None:
     assert 0.0 <= payload["lease_utilization"] <= 1.0
 
 
+def test_get_placement_lease_requires_read_scope() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write"])
+    response = client.get(
+        "/v1/placements/leases/lease-missing",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+def test_get_placement_lease_returns_lifecycle_snapshot() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {"device_id": "gpu-node-lease-view", "capabilities": ["compute.comfyui.local"]}
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-lease-view"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-lease-view"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    allocate = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-lease-view-1",
+                "task_id": "task-lease-view-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    lease_id = allocate.json()["payload"]["decision"]["lease_id"]
+
+    first_read = client.get(
+        f"/v1/placements/leases/{lease_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert first_read.status_code == 200
+    first_payload = first_read.json()
+    assert first_payload["lease_id"] == lease_id
+    assert first_payload["status"] == "active"
+    assert first_payload["released_at"] is None
+    assert first_payload["expired_at"] is None
+
+    release = client.post(
+        "/v1/placements/release",
+        json=_command_envelope(
+            {"lease_id": lease_id, "placement_request_id": f"lease:{lease_id}"},
+            command_type="device.placement.release",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert release.status_code == 200
+
+    second_read = client.get(
+        f"/v1/placements/leases/{lease_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert second_read.status_code == 200
+    second_payload = second_read.json()
+    assert second_payload["status"] == "released"
+    assert isinstance(second_payload["released_at"], str)
+    assert second_payload["expired_at"] is None
+
+
 def test_release_placement_emits_lease_released_event() -> None:
     client = _setup_test_env()
     token = _token(["devices:write", "devices:read"])
