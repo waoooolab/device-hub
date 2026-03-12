@@ -261,6 +261,7 @@ class DeviceHubService:
         )
 
     def release_lease(self, lease_id: str) -> dict[str, Any]:
+        self._expire_due_leases()
         lease = self.leases.get(lease_id)
         if lease is None:
             raise KeyError(f"lease not found: {lease_id}")
@@ -288,6 +289,7 @@ class DeviceHubService:
         }
 
     def expire_lease(self, lease_id: str, *, reason_code: str = "ttl_expired") -> dict[str, Any]:
+        self._expire_due_leases()
         lease = self.leases.get(lease_id)
         if lease is None:
             raise KeyError(f"lease not found: {lease_id}")
@@ -318,6 +320,7 @@ class DeviceHubService:
         }
 
     def get_lease_snapshot(self, lease_id: str) -> dict[str, Any]:
+        self._expire_due_leases()
         lease = self.leases.get(lease_id)
         if lease is None:
             raise KeyError(f"lease not found: {lease_id}")

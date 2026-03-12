@@ -574,6 +574,136 @@ def test_get_placement_lease_returns_lifecycle_snapshot() -> None:
     assert second_payload["expired_at"] is None
 
 
+def test_get_placement_lease_marks_ttl_expired_snapshot() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {"device_id": "gpu-node-lease-expire-view", "capabilities": ["compute.comfyui.local"]}
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-lease-expire-view"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-lease-expire-view"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    allocate = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-lease-expire-view-1",
+                "task_id": "task-lease-expire-view-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    lease_id = allocate.json()["payload"]["decision"]["lease_id"]
+    app_module._hub.leases[lease_id].lease_expires_at = (
+        datetime.now(timezone.utc) - timedelta(seconds=5)
+    ).isoformat()
+
+    read = client.get(
+        f"/v1/placements/leases/{lease_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert read.status_code == 200
+    payload = read.json()
+    assert payload["lease_id"] == lease_id
+    assert payload["status"] == "expired"
+    assert payload["expire_reason_code"] == "ttl_expired"
+    assert isinstance(payload["expired_at"], str)
+
+
+def test_release_placement_returns_409_for_ttl_expired_lease() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {"device_id": "gpu-node-release-expired", "capabilities": ["compute.comfyui.local"]}
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-release-expired"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-release-expired"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    allocate = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-release-expired-1",
+                "task_id": "task-release-expired-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    lease_id = allocate.json()["payload"]["decision"]["lease_id"]
+    app_module._hub.leases[lease_id].lease_expires_at = (
+        datetime.now(timezone.utc) - timedelta(seconds=5)
+    ).isoformat()
+
+    release = client.post(
+        "/v1/placements/release",
+        json=_command_envelope(
+            {"lease_id": lease_id, "placement_request_id": f"lease:{lease_id}"},
+            command_type="device.placement.release",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert release.status_code == 409
+    assert "lease already expired" in release.text
+
+
 def test_release_placement_emits_lease_released_event() -> None:
     client = _setup_test_env()
     token = _token(["devices:write", "devices:read"])

@@ -171,3 +171,53 @@ def test_capacity_snapshot_expires_stale_active_lease() -> None:
     assert snapshot["available_slots"] >= 1
     assert svc.leases[lease_id].status == "expired"
     assert svc.leases[lease_id].expire_reason_code == "ttl_expired"
+
+
+def test_get_lease_snapshot_expires_stale_active_lease() -> None:
+    svc = DeviceHubService()
+    svc.register_device("desktop-stale-view", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-stale-view")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-stale-view")
+
+    allocated = svc.allocate_placement(
+        run_id="run-stale-view",
+        task_id="task-stale-view",
+        capability="compute.comfyui.local",
+        trace_id="trace-stale-view",
+    )
+    lease_id = allocated["lease_id"]
+    svc.leases[lease_id].lease_expires_at = (
+        datetime.now(timezone.utc) - timedelta(seconds=5)
+    ).isoformat()
+
+    snapshot = svc.get_lease_snapshot(lease_id)
+    assert snapshot["status"] == "expired"
+    assert snapshot["expire_reason_code"] == "ttl_expired"
+    assert isinstance(snapshot["expired_at"], str)
+
+
+def test_release_lease_rejects_when_ttl_already_expired() -> None:
+    svc = DeviceHubService()
+    svc.register_device("desktop-stale-release", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-stale-release")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-stale-release")
+
+    allocated = svc.allocate_placement(
+        run_id="run-stale-release",
+        task_id="task-stale-release",
+        capability="compute.comfyui.local",
+        trace_id="trace-stale-release",
+    )
+    lease_id = allocated["lease_id"]
+    svc.leases[lease_id].lease_expires_at = (
+        datetime.now(timezone.utc) - timedelta(seconds=5)
+    ).isoformat()
+
+    try:
+        svc.release_lease(lease_id)
+    except ValueError as exc:
+        assert str(exc) == "lease already expired"
+    else:
+        raise AssertionError("release_lease should reject ttl-expired lease")
