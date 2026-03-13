@@ -434,7 +434,7 @@ class DeviceHubService:
         if eligible_devices > 0:
             lease_utilization = min(1.0, active_leases / eligible_devices)
         else:
-            lease_utilization = 1.0
+            lease_utilization = 0.0
         tenant_active_counts = self._active_lease_counts_by_tenant()
         tenant_limit = self.max_active_leases_per_tenant
         tenants_at_limit = 0

@@ -730,6 +730,21 @@ def test_get_placement_capacity_requires_read_scope() -> None:
     assert response.status_code == 403
 
 
+def test_get_placement_capacity_returns_zero_utilization_when_no_eligible_devices() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:read"])
+    response = client.get(
+        "/v1/placements/capacity",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["eligible_devices"] == 0
+    assert payload["active_leases"] == 0
+    assert payload["available_slots"] == 0
+    assert payload["lease_utilization"] == 0.0
+
+
 def test_get_placement_capacity_returns_snapshot() -> None:
     client = _setup_test_env()
     write_token = _token(["devices:write"])

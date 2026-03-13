@@ -92,6 +92,15 @@ def test_allocate_placement_returns_rejected_when_no_candidate():
     assert decision["reason_code"] == "no_eligible_device"
 
 
+def test_capacity_snapshot_zero_utilization_without_eligible_devices() -> None:
+    svc = DeviceHubService()
+    snapshot = svc.placement_capacity_snapshot()
+    assert snapshot["eligible_devices"] == 0
+    assert snapshot["active_leases"] == 0
+    assert snapshot["available_slots"] == 0
+    assert snapshot["lease_utilization"] == 0.0
+
+
 def test_release_and_expire_lease_lifecycle():
     svc = DeviceHubService()
     svc.register_device("desktop-lease", ["compute.comfyui.local"])
