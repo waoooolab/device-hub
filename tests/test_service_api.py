@@ -122,6 +122,29 @@ def test_register_requires_token() -> None:
     assert response.status_code == 401
 
 
+def test_register_rejects_missing_token_use_claim() -> None:
+    client = _setup_test_env()
+    issued = _issue_token(
+        {
+            "iss": "runtime-gateway",
+            "sub": "svc:runtime-gateway",
+            "aud": "device-hub",
+            "tenant_id": "t1",
+            "app_id": "waoooo",
+            "scope": ["devices:write"],
+            "trace_id": "trace-device-1",
+            "session_key": "tenant:t1:app:waoooo:channel:web:actor:u1:thread:main:agent:pm",
+        }
+    )
+    response = client.post(
+        "/v1/devices/register",
+        json=_command_envelope({"device_id": "d1", "capabilities": ["compute.comfyui.local"]}),
+        headers={"Authorization": f"Bearer {issued}"},
+    )
+    assert response.status_code == 401
+    assert "missing token_use" in response.json()["detail"]
+
+
 def test_register_rejects_default_secret_in_strict_mode(monkeypatch) -> None:
     monkeypatch.setenv("WAOOOOLAB_STRICT_TOKEN_SECRET", "true")
     monkeypatch.delenv("RUNTIME_GATEWAY_TOKEN_SECRET", raising=False)

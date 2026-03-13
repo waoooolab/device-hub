@@ -18,6 +18,7 @@ class TokenError(ValueError):
 
 
 _DEFAULT_TOKEN_SECRET = "dev-insecure-secret"
+_ALLOWED_TOKEN_USES = {"access", "service", "device"}
 
 
 def _env_truthy(name: str, default: bool = False) -> bool:
@@ -101,9 +102,18 @@ def require_claims(*, audience: str, required_scope: str):
         if not isinstance(scope, list) or required_scope not in scope:
             raise HTTPException(status_code=403, detail=f"missing required scope: {required_scope}")
 
-        trace_id = claims.get("trace_id")
-        if not isinstance(trace_id, str) or not trace_id:
-            raise HTTPException(status_code=401, detail="invalid token claims: missing trace_id")
+        for field in ("tenant_id", "app_id", "trace_id"):
+            value = claims.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise HTTPException(status_code=401, detail=f"invalid token claims: missing {field}")
+        token_use = claims.get("token_use")
+        if not isinstance(token_use, str) or not token_use.strip():
+            raise HTTPException(status_code=401, detail="invalid token claims: missing token_use")
+        if token_use.strip().lower() not in _ALLOWED_TOKEN_USES:
+            raise HTTPException(
+                status_code=401,
+                detail=f"invalid token claims: unsupported token_use '{token_use}'",
+            )
 
         return claims
 
