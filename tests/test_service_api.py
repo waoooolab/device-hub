@@ -122,6 +122,20 @@ def test_register_requires_token() -> None:
     assert response.status_code == 401
 
 
+def test_register_rejects_default_secret_in_strict_mode(monkeypatch) -> None:
+    monkeypatch.setenv("WAOOOOLAB_STRICT_TOKEN_SECRET", "true")
+    monkeypatch.delenv("RUNTIME_GATEWAY_TOKEN_SECRET", raising=False)
+    client = _setup_test_env()
+    issued = _token(["devices:write"])
+    response = client.post(
+        "/v1/devices/register",
+        json=_command_envelope({"device_id": "d1", "capabilities": ["compute.comfyui.local"]}),
+        headers={"Authorization": f"Bearer {issued}"},
+    )
+    assert response.status_code == 401
+    assert "insecure default token secret" in response.json()["detail"]
+
+
 def test_register_and_pair_and_heartbeat_flow() -> None:
     client = _setup_test_env()
     token = _token(["devices:write", "devices:read"])

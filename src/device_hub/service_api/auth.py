@@ -17,8 +17,22 @@ class TokenError(ValueError):
     """Token verification or parsing error."""
 
 
+_DEFAULT_TOKEN_SECRET = "dev-insecure-secret"
+
+
+def _env_truthy(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _secret() -> bytes:
-    value = os.environ.get("RUNTIME_GATEWAY_TOKEN_SECRET", "dev-insecure-secret")
+    value = os.environ.get("RUNTIME_GATEWAY_TOKEN_SECRET", _DEFAULT_TOKEN_SECRET)
+    if _env_truthy("WAOOOOLAB_STRICT_TOKEN_SECRET", default=False) and value == _DEFAULT_TOKEN_SECRET:
+        raise TokenError(
+            "insecure default token secret is forbidden when WAOOOOLAB_STRICT_TOKEN_SECRET=true"
+        )
     return value.encode("utf-8")
 
 
