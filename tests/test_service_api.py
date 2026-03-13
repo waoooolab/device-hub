@@ -801,6 +801,68 @@ def test_allocate_placement_returns_required_capabilities_unavailable_reason() -
     assert "required_capabilities" in event["payload"]["decision"]["reason"]
 
 
+def test_allocate_placement_returns_node_pool_fallback_when_requested_pool_missing() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {
+                "device_id": "gpu-node-pool-fallback-api",
+                "capabilities": ["compute.comfyui.local"],
+                "region": "us-west",
+                "node_pool": "pool-b",
+            }
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-pool-fallback-api"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-pool-fallback-api"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    response = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-nodepool-fallback-api",
+                "task_id": "task-nodepool-fallback-api",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "region": "us-west",
+                        "node_pool": "pool-a",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    event = response.json()
+    assert event["event_type"] == "device.lease.acquired"
+    assert event["payload"]["decision"]["reason_code"] == "node_pool_fallback"
+    assert "alternate node_pool" in event["payload"]["decision"]["reason"]
+
+
 def test_allocate_placement_returns_avoid_capabilities_excluded_reason() -> None:
     client = _setup_test_env()
     token = _token(["devices:write", "devices:read"])

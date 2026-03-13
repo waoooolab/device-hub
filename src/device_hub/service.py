@@ -563,6 +563,8 @@ class DeviceHubService:
         if not eligible_ids:
             return self._rejected_placement(run_id, task_id, capability)
 
+        fallback_reason_code: str | None = None
+        fallback_reason: str | None = None
         constrained_ids, constraint_reason_code = self._filter_candidates_by_constraints(
             candidate_ids=eligible_ids,
             placement_constraints=placement_constraints,
@@ -577,13 +579,27 @@ class DeviceHubService:
                     reason="no eligible device matches placement_constraints.region",
                 )
             if constraint_reason_code == "node_pool_unavailable":
-                return self._rejected_placement(
-                    run_id,
-                    task_id,
-                    capability,
-                    reason_code="node_pool_unavailable",
-                    reason="no eligible device matches placement_constraints.node_pool",
+                fallback_ids, _ = self._filter_candidates_by_constraints(
+                    candidate_ids=eligible_ids,
+                    placement_constraints=_placement_constraints_without_node_pool(
+                        placement_constraints
+                    ),
                 )
+                if fallback_ids:
+                    constrained_ids = fallback_ids
+                    fallback_reason_code = "node_pool_fallback"
+                    fallback_reason = (
+                        "no eligible device matches placement_constraints.node_pool; "
+                        "fallback to alternate node_pool"
+                    )
+                else:
+                    return self._rejected_placement(
+                        run_id,
+                        task_id,
+                        capability,
+                        reason_code="node_pool_unavailable",
+                        reason="no eligible device matches placement_constraints.node_pool",
+                    )
             if constraint_reason_code == "cost_tier_unavailable":
                 return self._rejected_placement(
                     run_id,
@@ -616,13 +632,17 @@ class DeviceHubService:
                     reason_code="avoid_capabilities_excluded",
                     reason="all eligible devices are excluded by placement_constraints.avoid_capabilities",
                 )
-            return self._rejected_placement(run_id, task_id, capability)
+            if not constrained_ids:
+                return self._rejected_placement(run_id, task_id, capability)
 
         constrained_pool_ids = list(constrained_ids)
-        constrained_ids, fallback_reason_code, fallback_reason = self._apply_locality_preference(
+        constrained_ids, locality_reason_code, locality_reason = self._apply_locality_preference(
             candidate_ids=constrained_ids,
             placement_constraints=placement_constraints,
         )
+        if fallback_reason_code is None and locality_reason_code is not None:
+            fallback_reason_code = locality_reason_code
+            fallback_reason = locality_reason
         if not constrained_ids:
             return self._rejected_placement(run_id, task_id, capability)
 
@@ -865,3 +885,13 @@ def _build_allocation_resource_snapshot(
         if isinstance(tenant_limit, int) and tenant_limit > 0:
             snapshot["tenant_limit"] = tenant_limit
     return snapshot
+
+
+def _placement_constraints_without_node_pool(
+    placement_constraints: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(placement_constraints, dict):
+        return None
+    stripped = dict(placement_constraints)
+    stripped.pop("node_pool", None)
+    return stripped

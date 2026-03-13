@@ -457,6 +457,36 @@ def test_allocate_placement_rejects_when_region_or_cost_constraints_fail() -> No
     assert cost_miss["reason_code"] == "cost_limit_exceeded"
 
 
+def test_allocate_placement_fallbacks_to_alternate_node_pool_when_requested_pool_missing() -> None:
+    svc = DeviceHubService()
+    svc.register_device(
+        "gpu-node-pool-b",
+        ["compute.comfyui.local"],
+        execution_site="cloud",
+        region="us-west",
+        cost_tier="balanced",
+        node_pool="pool-b",
+    )
+    req = svc.request_pairing("gpu-node-pool-b")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("gpu-node-pool-b")
+
+    decision = svc.allocate_placement(
+        run_id="run-nodepool-fallback",
+        task_id="task-nodepool-fallback",
+        capability="compute.comfyui.local",
+        trace_id="trace-nodepool-fallback",
+        placement_constraints={
+            "region": "us-west",
+            "node_pool": "pool-a",
+        },
+    )
+    assert decision["outcome"] == "lease_acquired"
+    assert decision["device_id"] == "gpu-node-pool-b"
+    assert decision["reason_code"] == "node_pool_fallback"
+    assert "alternate node_pool" in decision["reason"]
+
+
 def test_allocate_placement_rejects_when_required_capabilities_not_fully_satisfied() -> None:
     svc = DeviceHubService()
     svc.register_device(
