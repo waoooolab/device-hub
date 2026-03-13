@@ -610,6 +610,33 @@ class DeviceHubService:
             "reason_code": reason_code,
         }
 
+    def renew_lease(self, lease_id: str, *, lease_ttl_seconds: int = 300) -> dict[str, Any]:
+        self._expire_due_leases()
+        if (
+            not isinstance(lease_ttl_seconds, int)
+            or isinstance(lease_ttl_seconds, bool)
+            or lease_ttl_seconds < 30
+            or lease_ttl_seconds > 3600
+        ):
+            raise ValueError("lease_ttl_seconds must be integer in [30, 3600]")
+        lease = self.leases.get(lease_id)
+        if lease is None:
+            raise KeyError(f"lease not found: {lease_id}")
+        if lease.status == "released":
+            raise ValueError("lease already released")
+        if lease.status == "expired":
+            raise ValueError("lease already expired")
+
+        lease.lease_expires_at = self._lease_expiry(lease_ttl_seconds)
+        return {
+            "run_id": lease.run_id,
+            "task_id": lease.task_id,
+            "outcome": "lease_renewed",
+            "device_id": lease.device_id,
+            "lease_id": lease.lease_id,
+            "lease_expires_at": lease.lease_expires_at,
+        }
+
     def get_lease_snapshot(self, lease_id: str) -> dict[str, Any]:
         self._expire_due_leases()
         lease = self.leases.get(lease_id)

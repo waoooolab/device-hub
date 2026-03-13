@@ -27,7 +27,8 @@
         "device.route.rejected",
         "device.lease.acquired",
         "device.lease.released",
-        "device.lease.expired"
+        "device.lease.expired",
+        "device.lease.renewed"
       ]
     },
     "tenant_id": {
@@ -88,7 +89,8 @@
                 "rejected",
                 "lease_acquired",
                 "lease_released",
-                "lease_expired"
+                "lease_expired",
+                "lease_renewed"
               ]
             },
             "device_id": {
@@ -299,6 +301,38 @@
                 "properties": {
                   "outcome": {
                     "const": "lease_expired"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "device.lease.renewed"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "decision": {
+                "required": [
+                  "device_id",
+                  "lease_id",
+                  "lease_expires_at"
+                ],
+                "properties": {
+                  "outcome": {
+                    "const": "lease_renewed"
                   }
                 }
               }

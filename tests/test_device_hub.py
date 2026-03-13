@@ -124,6 +124,69 @@ def test_release_and_expire_lease_lifecycle():
     assert expired["reason_code"] == "ttl_expired"
 
 
+def test_renew_lease_extends_expiry_for_active_lease() -> None:
+    svc = DeviceHubService()
+    svc.register_device("desktop-renew", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-renew")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-renew")
+
+    allocated = svc.allocate_placement(
+        run_id="run-renew-1",
+        task_id="task-renew-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-renew-1",
+    )
+    lease_id = allocated["lease_id"]
+    previous_expires_at = allocated["lease_expires_at"]
+
+    renewed = svc.renew_lease(lease_id, lease_ttl_seconds=600)
+    assert renewed["outcome"] == "lease_renewed"
+    assert renewed["lease_id"] == lease_id
+    assert datetime.fromisoformat(renewed["lease_expires_at"]) > datetime.fromisoformat(
+        previous_expires_at
+    )
+    assert svc.leases[lease_id].status == "active"
+
+
+def test_renew_lease_rejects_released_or_expired_lease() -> None:
+    svc = DeviceHubService()
+    svc.register_device("desktop-renew-terminal", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-renew-terminal")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-renew-terminal")
+
+    released_decision = svc.allocate_placement(
+        run_id="run-renew-terminal-release",
+        task_id="task-renew-terminal-release",
+        capability="compute.comfyui.local",
+        trace_id="trace-renew-terminal-release",
+    )
+    released_lease_id = released_decision["lease_id"]
+    svc.release_lease(released_lease_id)
+    try:
+        svc.renew_lease(released_lease_id)
+    except ValueError as exc:
+        assert str(exc) == "lease already released"
+    else:
+        raise AssertionError("renew_lease should reject released lease")
+
+    expired_decision = svc.allocate_placement(
+        run_id="run-renew-terminal-expire",
+        task_id="task-renew-terminal-expire",
+        capability="compute.comfyui.local",
+        trace_id="trace-renew-terminal-expire",
+    )
+    expired_lease_id = expired_decision["lease_id"]
+    svc.expire_lease(expired_lease_id, reason_code="ttl_expired")
+    try:
+        svc.renew_lease(expired_lease_id)
+    except ValueError as exc:
+        assert str(exc) == "lease already expired"
+    else:
+        raise AssertionError("renew_lease should reject expired lease")
+
+
 def test_allocate_placement_rejects_when_capacity_is_exhausted() -> None:
     svc = DeviceHubService()
     svc.register_device("desktop-capacity", ["compute.comfyui.local"])

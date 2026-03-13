@@ -1135,6 +1135,155 @@ def test_expire_placement_emits_lease_expired_event() -> None:
     assert event["payload"]["decision"]["reason_code"] == "ttl_expired"
 
 
+def test_renew_placement_emits_lease_renewed_event() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {"device_id": "gpu-node-renew", "capabilities": ["compute.comfyui.local"]}
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-renew"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-renew"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    allocate = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-renew-1",
+                "task_id": "task-renew-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    lease_id = allocate.json()["payload"]["decision"]["lease_id"]
+    previous_expires_at = allocate.json()["payload"]["decision"]["lease_expires_at"]
+
+    renew = client.post(
+        "/v1/placements/renew",
+        json=_command_envelope(
+            {"lease_id": lease_id, "lease_ttl_seconds": 600},
+            command_type="device.placement.renew",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert renew.status_code == 200
+    event = renew.json()
+    assert event["event_type"] == "device.lease.renewed"
+    assert event["payload"]["decision"]["outcome"] == "lease_renewed"
+    assert event["payload"]["decision"]["lease_id"] == lease_id
+    assert datetime.fromisoformat(event["payload"]["decision"]["lease_expires_at"]) > datetime.fromisoformat(
+        previous_expires_at
+    )
+
+
+def test_renew_placement_returns_409_for_ttl_expired_lease() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {"device_id": "gpu-node-renew-expired", "capabilities": ["compute.comfyui.local"]}
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-renew-expired"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-renew-expired"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    allocate = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-renew-expired-1",
+                "task_id": "task-renew-expired-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    lease_id = allocate.json()["payload"]["decision"]["lease_id"]
+    app_module._hub.leases[lease_id].lease_expires_at = (
+        datetime.now(timezone.utc) - timedelta(seconds=5)
+    ).isoformat()
+
+    renew = client.post(
+        "/v1/placements/renew",
+        json=_command_envelope(
+            {"lease_id": lease_id, "lease_ttl_seconds": 300},
+            command_type="device.placement.renew",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert renew.status_code == 409
+    assert "lease already expired" in renew.text
+
+
+def test_renew_placement_rejects_invalid_ttl_range() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+    response = client.post(
+        "/v1/placements/renew",
+        json=_command_envelope(
+            {"lease_id": "lease-missing", "lease_ttl_seconds": 5},
+            command_type="device.placement.renew",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+    assert "lease_ttl_seconds must be integer in [30, 3600]" in response.text
+
+
 def test_release_placement_is_idempotent_for_repeated_release() -> None:
     client = _setup_test_env()
     token = _token(["devices:write", "devices:read"])

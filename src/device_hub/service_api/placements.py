@@ -248,3 +248,49 @@ def expire_placement_response(
     )
     _validate_route_event(event, error_message="invalid lease expire event")
     return finalize_event(event)
+
+
+def renew_placement_response(
+    *,
+    envelope: dict[str, Any],
+    claims: dict[str, Any],
+    hub: DeviceHubService,
+) -> dict[str, Any]:
+    validate_write(envelope, claims)
+    payload = extract_payload(envelope, required_fields=["lease_id"])
+    lease_id = payload.get("lease_id")
+    lease_ttl_seconds = payload.get("lease_ttl_seconds", 300)
+    if not isinstance(lease_id, str) or not lease_id:
+        raise HTTPException(status_code=422, detail="payload.lease_id must be non-empty string")
+    if (
+        not isinstance(lease_ttl_seconds, int)
+        or isinstance(lease_ttl_seconds, bool)
+        or lease_ttl_seconds < 30
+        or lease_ttl_seconds > 3600
+    ):
+        raise HTTPException(status_code=422, detail="payload.lease_ttl_seconds must be integer in [30, 3600]")
+
+    try:
+        decision = hub.renew_lease(lease_id, lease_ttl_seconds=lease_ttl_seconds)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    event = build_event(
+        envelope,
+        event_type="device.lease.renewed",
+        payload={
+            "run_id": str(decision["run_id"]),
+            "task_id": str(decision["task_id"]),
+            "placement_request_id": str(payload.get("placement_request_id") or f"lease:{lease_id}"),
+            "decision": {
+                "outcome": "lease_renewed",
+                "device_id": str(decision["device_id"]),
+                "lease_id": str(decision["lease_id"]),
+                "lease_expires_at": str(decision["lease_expires_at"]),
+            },
+        },
+    )
+    _validate_route_event(event, error_message="invalid lease renew event")
+    return finalize_event(event)
