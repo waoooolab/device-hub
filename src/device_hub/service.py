@@ -36,10 +36,23 @@ class DeviceHubService:
     pairing: PairingManager = field(default_factory=PairingManager)
     leases: dict[str, LeaseRecord] = field(default_factory=dict)
     max_active_leases_per_tenant: int | None = None
+    tenant_active_lease_limits: dict[str, int] = field(default_factory=dict)
     lease_expire_sweeps_total: int = 0
     lease_expired_total: int = 0
     lease_expire_last_sweep_at: str | None = None
     lease_expire_last_sweep_expired: int = 0
+
+    def __post_init__(self) -> None:
+        if self.max_active_leases_per_tenant is not None:
+            if (
+                not isinstance(self.max_active_leases_per_tenant, int)
+                or isinstance(self.max_active_leases_per_tenant, bool)
+                or self.max_active_leases_per_tenant <= 0
+            ):
+                raise ValueError("max_active_leases_per_tenant must be positive integer when provided")
+        self.tenant_active_lease_limits = _normalize_tenant_active_lease_limits(
+            self.tenant_active_lease_limits
+        )
 
     @staticmethod
     def _rejected_placement(
@@ -366,6 +379,14 @@ class DeviceHubService:
             counts[normalized] = counts.get(normalized, 0) + 1
         return counts
 
+    def _resolve_tenant_active_lease_limit(self, tenant_id: str) -> int | None:
+        normalized = tenant_id.strip()
+        if not normalized:
+            return None
+        if normalized in self.tenant_active_lease_limits:
+            return self.tenant_active_lease_limits[normalized]
+        return self.max_active_leases_per_tenant
+
     def _expire_due_leases(self) -> int:
         now = datetime.now(timezone.utc)
         now_iso = now.isoformat()
@@ -436,10 +457,12 @@ class DeviceHubService:
         else:
             lease_utilization = 0.0
         tenant_active_counts = self._active_lease_counts_by_tenant()
-        tenant_limit = self.max_active_leases_per_tenant
+        default_tenant_limit = self.max_active_leases_per_tenant
         tenants_at_limit = 0
-        if tenant_limit is not None and tenant_limit > 0:
-            tenants_at_limit = sum(1 for count in tenant_active_counts.values() if count >= tenant_limit)
+        for tenant_id, count in tenant_active_counts.items():
+            tenant_limit = self._resolve_tenant_active_lease_limit(tenant_id)
+            if tenant_limit is not None and count >= tenant_limit:
+                tenants_at_limit += 1
         return {
             "total_devices": total_devices,
             "eligible_devices": eligible_devices,
@@ -456,8 +479,11 @@ class DeviceHubService:
             "lease_expire_last_sweep_at": self.lease_expire_last_sweep_at,
             "lease_expire_last_sweep_expired": self.lease_expire_last_sweep_expired,
             "tenant_quota": {
-                "enabled": tenant_limit is not None,
-                "max_active_leases_per_tenant": tenant_limit,
+                "enabled": (
+                    default_tenant_limit is not None or len(self.tenant_active_lease_limits) > 0
+                ),
+                "max_active_leases_per_tenant": default_tenant_limit,
+                "tenant_limit_overrides": dict(self.tenant_active_lease_limits),
                 "tenants_with_active_leases": len(tenant_active_counts),
                 "max_tenant_active_leases": max(tenant_active_counts.values(), default=0),
                 "tenants_at_limit": tenants_at_limit,
@@ -531,8 +557,8 @@ class DeviceHubService:
             return self._rejected_placement(run_id, task_id, capability)
 
         normalized_tenant_id = tenant_id.strip() if isinstance(tenant_id, str) else ""
-        tenant_limit = self.max_active_leases_per_tenant
-        if tenant_limit is not None and tenant_limit > 0 and normalized_tenant_id:
+        tenant_limit = self._resolve_tenant_active_lease_limit(normalized_tenant_id)
+        if tenant_limit is not None:
             tenant_active_leases = self._active_lease_count_for_tenant(normalized_tenant_id)
             if tenant_active_leases >= tenant_limit:
                 return self._rejected_tenant_quota(
@@ -707,3 +733,20 @@ class DeviceHubService:
             "expired_at": lease.expired_at,
             "expire_reason_code": lease.expire_reason_code,
         }
+
+
+def _normalize_tenant_active_lease_limits(raw: dict[str, int] | None) -> dict[str, int]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError("tenant_active_lease_limits must be object mapping tenant_id to positive integer")
+    normalized_limits: dict[str, int] = {}
+    for tenant_id, limit in raw.items():
+        if not isinstance(tenant_id, str) or not tenant_id.strip():
+            raise ValueError("tenant_active_lease_limits keys must be non-empty strings")
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            raise ValueError(
+                "tenant_active_lease_limits values must be positive integers"
+            )
+        normalized_limits[tenant_id.strip()] = limit
+    return normalized_limits

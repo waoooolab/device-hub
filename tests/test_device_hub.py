@@ -270,6 +270,105 @@ def test_allocate_placement_rejects_when_tenant_quota_is_exhausted() -> None:
     assert snapshot["tenant_quota"]["tenants_at_limit"] >= 1
 
 
+def test_allocate_placement_honors_tenant_quota_overrides_before_default() -> None:
+    svc = DeviceHubService(
+        max_active_leases_per_tenant=3,
+        tenant_active_lease_limits={"t1": 1},
+    )
+    for device_id in ("desktop-quota-ovr-a", "desktop-quota-ovr-b", "desktop-quota-ovr-c"):
+        svc.register_device(device_id, ["compute.comfyui.local"])
+        req = svc.request_pairing(device_id)
+        svc.approve_pairing(req.code)
+        svc.receive_heartbeat(device_id)
+
+    first_t1 = svc.allocate_placement(
+        run_id="run-quota-ovr-t1-1",
+        task_id="task-quota-ovr-t1-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-quota-ovr-t1-1",
+        tenant_id="t1",
+    )
+    assert first_t1["outcome"] == "lease_acquired"
+
+    second_t1 = svc.allocate_placement(
+        run_id="run-quota-ovr-t1-2",
+        task_id="task-quota-ovr-t1-2",
+        capability="compute.comfyui.local",
+        trace_id="trace-quota-ovr-t1-2",
+        tenant_id="t1",
+    )
+    assert second_t1["outcome"] == "rejected"
+    assert second_t1["reason_code"] == "tenant_quota_exhausted"
+    assert second_t1["resource_snapshot"]["tenant_limit"] == 1
+
+    first_t2 = svc.allocate_placement(
+        run_id="run-quota-ovr-t2-1",
+        task_id="task-quota-ovr-t2-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-quota-ovr-t2-1",
+        tenant_id="t2",
+    )
+    assert first_t2["outcome"] == "lease_acquired"
+
+    second_t2 = svc.allocate_placement(
+        run_id="run-quota-ovr-t2-2",
+        task_id="task-quota-ovr-t2-2",
+        capability="compute.comfyui.local",
+        trace_id="trace-quota-ovr-t2-2",
+        tenant_id="t2",
+    )
+    assert second_t2["outcome"] == "lease_acquired"
+
+    snapshot = svc.placement_capacity_snapshot()
+    assert snapshot["tenant_quota"]["enabled"] is True
+    assert snapshot["tenant_quota"]["max_active_leases_per_tenant"] == 3
+    assert snapshot["tenant_quota"]["tenant_limit_overrides"]["t1"] == 1
+    assert snapshot["tenant_quota"]["tenants_with_active_leases"] >= 2
+    assert snapshot["tenant_quota"]["tenants_at_limit"] >= 1
+
+
+def test_allocate_placement_supports_override_only_quota_without_default() -> None:
+    svc = DeviceHubService(tenant_active_lease_limits={"vip": 2})
+    for device_id in ("desktop-quota-vip-a", "desktop-quota-vip-b", "desktop-quota-vip-c"):
+        svc.register_device(device_id, ["compute.comfyui.local"])
+        req = svc.request_pairing(device_id)
+        svc.approve_pairing(req.code)
+        svc.receive_heartbeat(device_id)
+
+    first = svc.allocate_placement(
+        run_id="run-quota-vip-1",
+        task_id="task-quota-vip-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-quota-vip-1",
+        tenant_id="vip",
+    )
+    second = svc.allocate_placement(
+        run_id="run-quota-vip-2",
+        task_id="task-quota-vip-2",
+        capability="compute.comfyui.local",
+        trace_id="trace-quota-vip-2",
+        tenant_id="vip",
+    )
+    third = svc.allocate_placement(
+        run_id="run-quota-vip-3",
+        task_id="task-quota-vip-3",
+        capability="compute.comfyui.local",
+        trace_id="trace-quota-vip-3",
+        tenant_id="vip",
+    )
+    assert first["outcome"] == "lease_acquired"
+    assert second["outcome"] == "lease_acquired"
+    assert third["outcome"] == "rejected"
+    assert third["reason_code"] == "tenant_quota_exhausted"
+    assert third["resource_snapshot"]["tenant_limit"] == 2
+
+    snapshot = svc.placement_capacity_snapshot()
+    assert snapshot["tenant_quota"]["enabled"] is True
+    assert snapshot["tenant_quota"]["max_active_leases_per_tenant"] is None
+    assert snapshot["tenant_quota"]["tenant_limit_overrides"]["vip"] == 2
+    assert snapshot["tenant_quota"]["tenants_at_limit"] >= 1
+
+
 def test_allocate_placement_prefers_local_and_falls_back_to_cloud() -> None:
     svc = DeviceHubService()
     svc.register_device(

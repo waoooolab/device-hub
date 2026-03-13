@@ -78,6 +78,41 @@ def _setup_test_env() -> TestClient:
     return TestClient(app_module.app)
 
 
+def test_tenant_active_lease_limits_from_env_parses_valid_json(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "WAOOOOLAB_DEVICE_HUB_TENANT_ACTIVE_LEASE_LIMITS",
+        '{"t1": 1, "enterprise": 5}',
+    )
+    parsed = app_module._tenant_active_lease_limits_from_env()
+    assert parsed == {"t1": 1, "enterprise": 5}
+
+
+def test_tenant_active_lease_limits_from_env_rejects_invalid_json(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "WAOOOOLAB_DEVICE_HUB_TENANT_ACTIVE_LEASE_LIMITS",
+        '{"t1": ',
+    )
+    try:
+        app_module._tenant_active_lease_limits_from_env()
+    except RuntimeError as exc:
+        assert "must be valid JSON object" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError for invalid tenant limits JSON")
+
+
+def test_tenant_active_lease_limits_from_env_rejects_non_positive_limit(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "WAOOOOLAB_DEVICE_HUB_TENANT_ACTIVE_LEASE_LIMITS",
+        '{"t1": 0}',
+    )
+    try:
+        app_module._tenant_active_lease_limits_from_env()
+    except RuntimeError as exc:
+        assert "limits must be positive integers" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError for non-positive tenant limit")
+
+
 def test_register_requires_token() -> None:
     client = _setup_test_env()
     response = client.post(
@@ -971,6 +1006,96 @@ def test_get_placement_capacity_exposes_tenant_quota_snapshot_when_enabled() -> 
     assert payload["tenant_quota"]["max_active_leases_per_tenant"] == 1
     assert payload["tenant_quota"]["tenants_with_active_leases"] >= 1
     assert payload["tenant_quota"]["max_tenant_active_leases"] >= 1
+    assert payload["tenant_quota"]["tenants_at_limit"] >= 1
+
+
+def test_get_placement_capacity_exposes_tenant_quota_overrides() -> None:
+    client = _setup_test_env()
+    app_module._hub = DeviceHubService(
+        max_active_leases_per_tenant=3,
+        tenant_active_lease_limits={"t1": 1},
+    )
+    token = _token(["devices:write", "devices:read"])
+
+    for device_id in ("gpu-node-capacity-ovr-a", "gpu-node-capacity-ovr-b"):
+        client.post(
+            "/v1/devices/register",
+            json=_command_envelope({"device_id": device_id, "capabilities": ["compute.comfyui.local"]}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        pair_req = client.post(
+            "/v1/devices/pairing/request",
+            json=_command_envelope({"device_id": device_id}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        code = pair_req.json()["payload"]["code"]
+        client.post(
+            "/v1/devices/pairing/approve",
+            json=_command_envelope({"code": code}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        client.post(
+            "/v1/devices/heartbeat",
+            json=_command_envelope({"device_id": device_id}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    allocate_first = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-capacity-ovr-1",
+                "task_id": "task-capacity-ovr-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert allocate_first.status_code == 200
+    assert allocate_first.json()["event_type"] == "device.lease.acquired"
+
+    allocate_second = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-capacity-ovr-2",
+                "task_id": "task-capacity-ovr-2",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert allocate_second.status_code == 200
+    assert allocate_second.json()["event_type"] == "device.route.rejected"
+    assert allocate_second.json()["payload"]["decision"]["reason_code"] == "tenant_quota_exhausted"
+
+    response = client.get(
+        "/v1/placements/capacity",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tenant_quota"]["enabled"] is True
+    assert payload["tenant_quota"]["max_active_leases_per_tenant"] == 3
+    assert payload["tenant_quota"]["tenant_limit_overrides"]["t1"] == 1
     assert payload["tenant_quota"]["tenants_at_limit"] >= 1
 
 

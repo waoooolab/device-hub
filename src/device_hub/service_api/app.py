@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 import os
 from typing import Any
 from uuid import uuid4
@@ -35,6 +36,7 @@ SERVICE_AUDIENCE = "device-hub"
 DEVICES_WRITE_SCOPE = "devices:write"
 DEVICES_READ_SCOPE = "devices:read"
 TENANT_LEASE_LIMIT_ENV = "WAOOOOLAB_DEVICE_HUB_MAX_ACTIVE_LEASES_PER_TENANT"
+TENANT_LEASE_LIMIT_OVERRIDES_ENV = "WAOOOOLAB_DEVICE_HUB_TENANT_ACTIVE_LEASE_LIMITS"
 
 
 def _max_active_leases_per_tenant_from_env() -> int | None:
@@ -53,9 +55,37 @@ def _max_active_leases_per_tenant_from_env() -> int | None:
     return value
 
 
+def _tenant_active_lease_limits_from_env() -> dict[str, int]:
+    raw = os.environ.get(TENANT_LEASE_LIMIT_OVERRIDES_ENV)
+    if raw is None:
+        return {}
+    normalized = raw.strip()
+    if not normalized:
+        return {}
+    try:
+        payload = json.loads(normalized)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{TENANT_LEASE_LIMIT_OVERRIDES_ENV} must be valid JSON object") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{TENANT_LEASE_LIMIT_OVERRIDES_ENV} must be JSON object")
+    limits: dict[str, int] = {}
+    for tenant_id, limit in payload.items():
+        if not isinstance(tenant_id, str) or not tenant_id.strip():
+            raise RuntimeError(
+                f"{TENANT_LEASE_LIMIT_OVERRIDES_ENV} tenant ids must be non-empty strings"
+            )
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            raise RuntimeError(
+                f"{TENANT_LEASE_LIMIT_OVERRIDES_ENV} limits must be positive integers"
+            )
+        limits[tenant_id.strip()] = limit
+    return limits
+
+
 app = FastAPI(title="device-hub", version="0.1.0")
 _hub = DeviceHubService(
-    max_active_leases_per_tenant=_max_active_leases_per_tenant_from_env()
+    max_active_leases_per_tenant=_max_active_leases_per_tenant_from_env(),
+    tenant_active_lease_limits=_tenant_active_lease_limits_from_env(),
 )
 
 
