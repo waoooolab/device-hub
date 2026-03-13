@@ -787,6 +787,9 @@ def test_get_placement_capacity_returns_snapshot() -> None:
     assert payload["lease_expired_total"] >= 0
     assert payload["lease_expire_last_sweep_expired"] >= 0
     assert isinstance(payload["lease_expire_last_sweep_at"], str)
+    assert payload["tenant_quota"]["enabled"] is False
+    assert payload["tenant_quota"]["max_active_leases_per_tenant"] is None
+    assert payload["tenant_quota"]["tenants_with_active_leases"] >= 1
 
 
 def test_get_placement_capacity_exposes_ttl_expire_sweep_metrics() -> None:
@@ -854,6 +857,94 @@ def test_get_placement_capacity_exposes_ttl_expire_sweep_metrics() -> None:
     assert payload["lease_status_counts"]["expired"] >= 1
     assert payload["lease_expire_last_sweep_expired"] >= 1
     assert payload["lease_expired_total"] >= 1
+    assert payload["tenant_quota"]["enabled"] is False
+
+
+def test_get_placement_capacity_exposes_tenant_quota_snapshot_when_enabled() -> None:
+    client = _setup_test_env()
+    app_module._hub = DeviceHubService(max_active_leases_per_tenant=1)
+    token = _token(["devices:write", "devices:read"])
+
+    for device_id in ("gpu-node-capacity-quota-a", "gpu-node-capacity-quota-b"):
+        client.post(
+            "/v1/devices/register",
+            json=_command_envelope({"device_id": device_id, "capabilities": ["compute.comfyui.local"]}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        pair_req = client.post(
+            "/v1/devices/pairing/request",
+            json=_command_envelope({"device_id": device_id}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        code = pair_req.json()["payload"]["code"]
+        client.post(
+            "/v1/devices/pairing/approve",
+            json=_command_envelope({"code": code}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        client.post(
+            "/v1/devices/heartbeat",
+            json=_command_envelope({"device_id": device_id}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    allocate_first = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-capacity-quota-1",
+                "task_id": "task-capacity-quota-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert allocate_first.status_code == 200
+
+    allocate_second = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-capacity-quota-2",
+                "task_id": "task-capacity-quota-2",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert allocate_second.status_code == 200
+    assert allocate_second.json()["event_type"] == "device.route.rejected"
+    assert allocate_second.json()["payload"]["decision"]["reason_code"] == "tenant_quota_exhausted"
+
+    response = client.get(
+        "/v1/placements/capacity",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tenant_quota"]["enabled"] is True
+    assert payload["tenant_quota"]["max_active_leases_per_tenant"] == 1
+    assert payload["tenant_quota"]["tenants_with_active_leases"] >= 1
+    assert payload["tenant_quota"]["max_tenant_active_leases"] >= 1
+    assert payload["tenant_quota"]["tenants_at_limit"] >= 1
 
 
 def test_get_placement_lease_requires_read_scope() -> None:

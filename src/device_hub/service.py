@@ -352,6 +352,20 @@ class DeviceHubService:
             if lease.status == "active" and lease.tenant_id == normalized
         )
 
+    def _active_lease_counts_by_tenant(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for lease in self.leases.values():
+            if lease.status != "active":
+                continue
+            tenant_id = lease.tenant_id
+            if not isinstance(tenant_id, str):
+                continue
+            normalized = tenant_id.strip()
+            if not normalized:
+                continue
+            counts[normalized] = counts.get(normalized, 0) + 1
+        return counts
+
     def _expire_due_leases(self) -> int:
         now = datetime.now(timezone.utc)
         now_iso = now.isoformat()
@@ -421,6 +435,11 @@ class DeviceHubService:
             lease_utilization = min(1.0, active_leases / eligible_devices)
         else:
             lease_utilization = 1.0
+        tenant_active_counts = self._active_lease_counts_by_tenant()
+        tenant_limit = self.max_active_leases_per_tenant
+        tenants_at_limit = 0
+        if tenant_limit is not None and tenant_limit > 0:
+            tenants_at_limit = sum(1 for count in tenant_active_counts.values() if count >= tenant_limit)
         return {
             "total_devices": total_devices,
             "eligible_devices": eligible_devices,
@@ -436,6 +455,13 @@ class DeviceHubService:
             "lease_expired_total": self.lease_expired_total,
             "lease_expire_last_sweep_at": self.lease_expire_last_sweep_at,
             "lease_expire_last_sweep_expired": self.lease_expire_last_sweep_expired,
+            "tenant_quota": {
+                "enabled": tenant_limit is not None,
+                "max_active_leases_per_tenant": tenant_limit,
+                "tenants_with_active_leases": len(tenant_active_counts),
+                "max_tenant_active_leases": max(tenant_active_counts.values(), default=0),
+                "tenants_at_limit": tenants_at_limit,
+            },
             "ts": datetime.now(timezone.utc).isoformat(),
         }
 

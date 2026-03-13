@@ -253,6 +253,12 @@ def test_allocate_placement_rejects_when_tenant_quota_is_exhausted() -> None:
         tenant_id="t2",
     )
     assert third["outcome"] == "lease_acquired"
+    snapshot = svc.placement_capacity_snapshot()
+    assert snapshot["tenant_quota"]["enabled"] is True
+    assert snapshot["tenant_quota"]["max_active_leases_per_tenant"] == 1
+    assert snapshot["tenant_quota"]["tenants_with_active_leases"] >= 1
+    assert snapshot["tenant_quota"]["max_tenant_active_leases"] >= 1
+    assert snapshot["tenant_quota"]["tenants_at_limit"] >= 1
 
 
 def test_allocate_placement_prefers_local_and_falls_back_to_cloud() -> None:
@@ -364,6 +370,8 @@ def test_capacity_snapshot_expires_stale_active_lease() -> None:
     assert snapshot["lease_expire_sweeps_total"] >= 1
     assert snapshot["lease_expire_last_sweep_expired"] >= 1
     assert isinstance(snapshot["lease_expire_last_sweep_at"], str)
+    assert snapshot["tenant_quota"]["enabled"] is False
+    assert snapshot["tenant_quota"]["max_active_leases_per_tenant"] is None
     assert svc.leases[lease_id].status == "expired"
     assert svc.leases[lease_id].expire_reason_code == "ttl_expired"
 
