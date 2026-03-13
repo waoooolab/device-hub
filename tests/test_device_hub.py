@@ -451,6 +451,76 @@ def test_allocate_placement_rejects_when_region_or_cost_constraints_fail() -> No
     assert cost_miss["reason_code"] == "cost_limit_exceeded"
 
 
+def test_allocate_placement_rejects_when_required_capabilities_not_fully_satisfied() -> None:
+    svc = DeviceHubService()
+    svc.register_device(
+        "gpu-required-gap",
+        ["compute.comfyui.local", "model.sd15"],
+        execution_site="cloud",
+        region="us-west",
+        cost_tier="balanced",
+    )
+    req = svc.request_pairing("gpu-required-gap")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("gpu-required-gap")
+
+    rejected = svc.allocate_placement(
+        run_id="run-required-gap",
+        task_id="task-required-gap",
+        capability="compute.comfyui.local",
+        trace_id="trace-required-gap",
+        placement_constraints={
+            "required_capabilities": ["compute.comfyui.local", "model.sdxl"],
+        },
+    )
+    assert rejected["outcome"] == "rejected"
+    assert rejected["reason_code"] == "required_capabilities_unavailable"
+
+
+def test_allocate_placement_respects_avoid_capabilities_filter() -> None:
+    svc = DeviceHubService()
+    svc.register_device(
+        "gpu-avoid-bad",
+        ["compute.comfyui.local", "blocked.maintenance"],
+        execution_site="cloud",
+        region="us-west",
+        cost_tier="balanced",
+    )
+    svc.register_device(
+        "gpu-avoid-good",
+        ["compute.comfyui.local", "model.sd15"],
+        execution_site="cloud",
+        region="us-west",
+        cost_tier="balanced",
+    )
+    req_bad = svc.request_pairing("gpu-avoid-bad")
+    req_good = svc.request_pairing("gpu-avoid-good")
+    svc.approve_pairing(req_bad.code)
+    svc.approve_pairing(req_good.code)
+    svc.receive_heartbeat("gpu-avoid-bad")
+    svc.receive_heartbeat("gpu-avoid-good")
+
+    selected = svc.allocate_placement(
+        run_id="run-avoid-1",
+        task_id="task-avoid-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-avoid-1",
+        placement_constraints={"avoid_capabilities": ["blocked.maintenance"]},
+    )
+    assert selected["outcome"] == "lease_acquired"
+    assert selected["device_id"] == "gpu-avoid-good"
+
+    rejected = svc.allocate_placement(
+        run_id="run-avoid-2",
+        task_id="task-avoid-2",
+        capability="compute.comfyui.local",
+        trace_id="trace-avoid-2",
+        placement_constraints={"avoid_capabilities": ["model.sd15", "blocked.maintenance"]},
+    )
+    assert rejected["outcome"] == "rejected"
+    assert rejected["reason_code"] == "avoid_capabilities_excluded"
+
+
 def test_capacity_snapshot_expires_stale_active_lease() -> None:
     svc = DeviceHubService()
     svc.register_device("desktop-stale-lease", ["compute.comfyui.local"])

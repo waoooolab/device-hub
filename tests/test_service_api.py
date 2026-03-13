@@ -733,6 +733,126 @@ def test_allocate_placement_tenant_quota_can_use_envelope_tenant_fallback() -> N
     assert snapshot["tenant_limit"] == 1
 
 
+def test_allocate_placement_returns_required_capabilities_unavailable_reason() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {
+                "device_id": "gpu-node-required-gap-api",
+                "capabilities": ["compute.comfyui.local", "model.sd15"],
+            }
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-required-gap-api"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-required-gap-api"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    response = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-required-gap-api",
+                "task_id": "task-required-gap-api",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": [
+                            "compute.comfyui.local",
+                            "model.sdxl",
+                        ],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    event = response.json()
+    assert event["event_type"] == "device.route.rejected"
+    assert event["payload"]["decision"]["reason_code"] == "required_capabilities_unavailable"
+    assert "required_capabilities" in event["payload"]["decision"]["reason"]
+
+
+def test_allocate_placement_returns_avoid_capabilities_excluded_reason() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {
+                "device_id": "gpu-node-avoid-excluded-api",
+                "capabilities": ["compute.comfyui.local", "blocked.maintenance"],
+            }
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-avoid-excluded-api"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-avoid-excluded-api"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    response = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-avoid-excluded-api",
+                "task_id": "task-avoid-excluded-api",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                        "avoid_capabilities": ["blocked.maintenance"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    event = response.json()
+    assert event["event_type"] == "device.route.rejected"
+    assert event["payload"]["decision"]["reason_code"] == "avoid_capabilities_excluded"
+    assert "avoid_capabilities" in event["payload"]["decision"]["reason"]
+
+
 def test_allocate_placement_rejects_invalid_execution_profile() -> None:
     client = _setup_test_env()
     token = _token(["devices:write", "devices:read"])

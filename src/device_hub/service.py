@@ -238,6 +238,30 @@ class DeviceHubService:
                 active_ids.append(device_id)
         return active_ids
 
+    def _device_supports_all_capabilities(
+        self,
+        *,
+        device_id: str,
+        required_capabilities: set[str],
+    ) -> bool:
+        rec = self.registry.devices.get(device_id)
+        if rec is None:
+            return False
+        device_capabilities = {cap.strip() for cap in rec.capabilities if isinstance(cap, str) and cap.strip()}
+        return required_capabilities.issubset(device_capabilities)
+
+    def _device_has_any_avoided_capability(
+        self,
+        *,
+        device_id: str,
+        avoid_capabilities: set[str],
+    ) -> bool:
+        rec = self.registry.devices.get(device_id)
+        if rec is None:
+            return False
+        device_capabilities = {cap.strip() for cap in rec.capabilities if isinstance(cap, str) and cap.strip()}
+        return len(device_capabilities.intersection(avoid_capabilities)) > 0
+
     def _filter_candidates_by_constraints(
         self,
         *,
@@ -291,6 +315,36 @@ class DeviceHubService:
             ]
             if not filtered:
                 return [], "cost_limit_exceeded"
+
+        required_capabilities = _normalize_constraint_capabilities(
+            placement_constraints.get("required_capabilities")
+        )
+        if required_capabilities:
+            filtered = [
+                device_id
+                for device_id in filtered
+                if self._device_supports_all_capabilities(
+                    device_id=device_id,
+                    required_capabilities=required_capabilities,
+                )
+            ]
+            if not filtered:
+                return [], "required_capabilities_unavailable"
+
+        avoid_capabilities = _normalize_constraint_capabilities(
+            placement_constraints.get("avoid_capabilities")
+        )
+        if avoid_capabilities:
+            filtered = [
+                device_id
+                for device_id in filtered
+                if not self._device_has_any_avoided_capability(
+                    device_id=device_id,
+                    avoid_capabilities=avoid_capabilities,
+                )
+            ]
+            if not filtered:
+                return [], "avoid_capabilities_excluded"
         return filtered, None
 
     def _apply_locality_preference(
@@ -546,6 +600,22 @@ class DeviceHubService:
                     reason_code="cost_limit_exceeded",
                     reason="no eligible device satisfies placement_constraints.max_cost_usd_hard",
                 )
+            if constraint_reason_code == "required_capabilities_unavailable":
+                return self._rejected_placement(
+                    run_id,
+                    task_id,
+                    capability,
+                    reason_code="required_capabilities_unavailable",
+                    reason="no eligible device satisfies placement_constraints.required_capabilities",
+                )
+            if constraint_reason_code == "avoid_capabilities_excluded":
+                return self._rejected_placement(
+                    run_id,
+                    task_id,
+                    capability,
+                    reason_code="avoid_capabilities_excluded",
+                    reason="all eligible devices are excluded by placement_constraints.avoid_capabilities",
+                )
             return self._rejected_placement(run_id, task_id, capability)
 
         constrained_pool_ids = list(constrained_ids)
@@ -750,3 +820,13 @@ def _normalize_tenant_active_lease_limits(raw: dict[str, int] | None) -> dict[st
             )
         normalized_limits[tenant_id.strip()] = limit
     return normalized_limits
+
+
+def _normalize_constraint_capabilities(raw: Any) -> set[str]:
+    if not isinstance(raw, list):
+        return set()
+    normalized: set[str] = set()
+    for capability in raw:
+        if isinstance(capability, str) and capability.strip():
+            normalized.add(capability.strip())
+    return normalized
