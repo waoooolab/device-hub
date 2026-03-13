@@ -240,6 +240,12 @@ def test_allocate_placement_rejects_when_tenant_quota_is_exhausted() -> None:
         tenant_id="t1",
     )
     assert first["outcome"] == "lease_acquired"
+    assert first["resource_snapshot"]["eligible_devices"] == 2
+    assert first["resource_snapshot"]["active_leases"] == 0
+    assert first["resource_snapshot"]["available_slots"] == 2
+    assert first["resource_snapshot"]["tenant_id"] == "t1"
+    assert first["resource_snapshot"]["tenant_active_leases"] == 0
+    assert first["resource_snapshot"]["tenant_limit"] == 1
 
     second = svc.allocate_placement(
         run_id="run-quota-2",

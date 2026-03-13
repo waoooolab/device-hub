@@ -334,6 +334,13 @@ def test_allocate_placement_returns_lease_acquired_event() -> None:
     assert event["payload"]["decision"]["device_id"] == "gpu-node-1"
     assert isinstance(event["payload"]["decision"]["lease_id"], str)
     assert isinstance(event["payload"]["decision"]["lease_expires_at"], str)
+    snapshot = event["payload"]["decision"]["resource_snapshot"]
+    assert snapshot["queue_depth"] == 1
+    assert snapshot["eligible_devices"] == 1
+    assert snapshot["active_leases"] == 0
+    assert snapshot["available_slots"] == 1
+    assert snapshot["tenant_id"] == "t1"
+    assert snapshot["tenant_active_leases"] == 0
 
 
 def test_allocate_placement_prefers_local_then_fallbacks_to_cloud_with_trace_fields() -> None:

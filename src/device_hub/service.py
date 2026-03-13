@@ -628,8 +628,10 @@ class DeviceHubService:
 
         normalized_tenant_id = tenant_id.strip() if isinstance(tenant_id, str) else ""
         tenant_limit = self._resolve_tenant_active_lease_limit(normalized_tenant_id)
-        if tenant_limit is not None:
+        tenant_active_leases = 0
+        if normalized_tenant_id:
             tenant_active_leases = self._active_lease_count_for_tenant(normalized_tenant_id)
+        if tenant_limit is not None:
             if tenant_active_leases >= tenant_limit:
                 return self._rejected_tenant_quota(
                     run_id,
@@ -684,6 +686,15 @@ class DeviceHubService:
             load_by_device=load_by_device,
             had_fallback=fallback_reason_code is not None,
         )
+        resource_snapshot = _build_allocation_resource_snapshot(
+            queue_depth=queue_depth,
+            eligible_devices=len(constrained_ids),
+            active_leases=active_candidate_leases,
+            available_slots=len(available_ids),
+            tenant_id=normalized_tenant_id or None,
+            tenant_active_leases=tenant_active_leases,
+            tenant_limit=tenant_limit,
+        )
         return self._acquired_placement(
             run_id=run_id,
             task_id=task_id,
@@ -693,7 +704,7 @@ class DeviceHubService:
             lease_ttl_seconds=lease_ttl_seconds,
             tenant_id=normalized_tenant_id or None,
             score=score,
-            resource_snapshot={"queue_depth": queue_depth},
+            resource_snapshot=resource_snapshot,
             route_reason_code=fallback_reason_code,
             route_reason=fallback_reason,
         )
@@ -830,3 +841,27 @@ def _normalize_constraint_capabilities(raw: Any) -> set[str]:
         if isinstance(capability, str) and capability.strip():
             normalized.add(capability.strip())
     return normalized
+
+
+def _build_allocation_resource_snapshot(
+    *,
+    queue_depth: int,
+    eligible_devices: int,
+    active_leases: int,
+    available_slots: int,
+    tenant_id: str | None,
+    tenant_active_leases: int,
+    tenant_limit: int | None,
+) -> dict[str, Any]:
+    snapshot: dict[str, Any] = {
+        "queue_depth": max(0, int(queue_depth)),
+        "eligible_devices": max(0, int(eligible_devices)),
+        "active_leases": max(0, int(active_leases)),
+        "available_slots": max(0, int(available_slots)),
+    }
+    if isinstance(tenant_id, str) and tenant_id.strip():
+        snapshot["tenant_id"] = tenant_id.strip()
+        snapshot["tenant_active_leases"] = max(0, int(tenant_active_leases))
+        if isinstance(tenant_limit, int) and tenant_limit > 0:
+            snapshot["tenant_limit"] = tenant_limit
+    return snapshot
