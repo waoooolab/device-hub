@@ -522,6 +522,10 @@ def test_allocate_placement_returns_route_rejected_event_when_capacity_exhausted
     event = second.json()
     assert event["event_type"] == "device.route.rejected"
     assert event["payload"]["decision"]["reason_code"] == "capacity_exhausted"
+    snapshot = event["payload"]["decision"]["resource_snapshot"]
+    assert snapshot["eligible_devices"] == 1
+    assert snapshot["active_leases"] == 1
+    assert snapshot["available_slots"] == 0
 
 
 def test_allocate_placement_returns_route_rejected_event_when_tenant_quota_exhausted() -> None:
@@ -604,6 +608,10 @@ def test_allocate_placement_returns_route_rejected_event_when_tenant_quota_exhau
     event = second.json()
     assert event["event_type"] == "device.route.rejected"
     assert event["payload"]["decision"]["reason_code"] == "tenant_quota_exhausted"
+    snapshot = event["payload"]["decision"]["resource_snapshot"]
+    assert snapshot["tenant_id"] == "t1"
+    assert snapshot["tenant_active_leases"] == 1
+    assert snapshot["tenant_limit"] == 1
 
 
 def test_allocate_placement_tenant_quota_can_use_envelope_tenant_fallback() -> None:
@@ -684,6 +692,10 @@ def test_allocate_placement_tenant_quota_can_use_envelope_tenant_fallback() -> N
     event = second.json()
     assert event["event_type"] == "device.route.rejected"
     assert event["payload"]["decision"]["reason_code"] == "tenant_quota_exhausted"
+    snapshot = event["payload"]["decision"]["resource_snapshot"]
+    assert snapshot["tenant_id"] == "t1"
+    assert snapshot["tenant_active_leases"] == 1
+    assert snapshot["tenant_limit"] == 1
 
 
 def test_allocate_placement_rejects_invalid_execution_profile() -> None:

@@ -21,6 +21,18 @@ from .support import (
     validate_write,
 )
 
+_RESOURCE_SNAPSHOT_INT_FIELDS = (
+    "gpu_memory_free_mb",
+    "queue_depth",
+    "eligible_devices",
+    "active_leases",
+    "available_slots",
+    "tenant_active_leases",
+    "tenant_limit",
+)
+_RESOURCE_SNAPSHOT_FLOAT_FIELDS = ("gpu_utilization_percent",)
+_RESOURCE_SNAPSHOT_STR_FIELDS = ("tenant_id",)
+
 
 def _validate_load_by_device(load_by_device: Any) -> None:
     if load_by_device is None:
@@ -38,6 +50,27 @@ def _validate_route_event(event: dict[str, Any], *, error_message: str) -> None:
         raise HTTPException(status_code=500, detail=f"{error_message}: {exc}") from exc
 
 
+def _filter_resource_snapshot(raw_snapshot: Any) -> dict[str, Any] | None:
+    if not isinstance(raw_snapshot, dict):
+        return None
+    snapshot: dict[str, Any] = {}
+    for key in _RESOURCE_SNAPSHOT_INT_FIELDS:
+        value = raw_snapshot.get(key)
+        if isinstance(value, int) and value >= 0:
+            snapshot[key] = value
+    for key in _RESOURCE_SNAPSHOT_FLOAT_FIELDS:
+        value = raw_snapshot.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            snapshot[key] = float(value)
+    for key in _RESOURCE_SNAPSHOT_STR_FIELDS:
+        value = raw_snapshot.get(key)
+        if isinstance(value, str) and value.strip():
+            snapshot[key] = value
+    if not snapshot:
+        return None
+    return snapshot
+
+
 def _allocation_decision_payload(decision: dict[str, Any], capability: str) -> dict[str, Any]:
     outcome = str(decision["outcome"])
     capability_match = list(decision.get("capability_match", [capability]))
@@ -52,11 +85,9 @@ def _allocation_decision_payload(decision: dict[str, Any], capability: str) -> d
         score = decision.get("score")
         if isinstance(score, (int, float)) and not isinstance(score, bool):
             payload["score"] = float(score)
-        resource_snapshot = decision.get("resource_snapshot")
-        if isinstance(resource_snapshot, dict):
-            queue_depth = resource_snapshot.get("queue_depth")
-            if isinstance(queue_depth, int):
-                payload["resource_snapshot"] = {"queue_depth": queue_depth}
+        filtered_snapshot = _filter_resource_snapshot(decision.get("resource_snapshot"))
+        if isinstance(filtered_snapshot, dict):
+            payload["resource_snapshot"] = filtered_snapshot
         reason_code = decision.get("reason_code")
         if isinstance(reason_code, str) and reason_code.strip():
             payload["reason_code"] = reason_code
@@ -70,11 +101,9 @@ def _allocation_decision_payload(decision: dict[str, Any], capability: str) -> d
         "reason": str(decision["reason"]),
         "capability_match": capability_match,
     }
-    resource_snapshot = decision.get("resource_snapshot")
-    if isinstance(resource_snapshot, dict):
-        queue_depth = resource_snapshot.get("queue_depth")
-        if isinstance(queue_depth, int):
-            payload["resource_snapshot"] = {"queue_depth": queue_depth}
+    filtered_snapshot = _filter_resource_snapshot(decision.get("resource_snapshot"))
+    if isinstance(filtered_snapshot, dict):
+        payload["resource_snapshot"] = filtered_snapshot
     return payload
 
 

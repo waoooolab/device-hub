@@ -140,6 +140,30 @@
                 "queue_depth": {
                   "type": "integer",
                   "minimum": 0
+                },
+                "eligible_devices": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "active_leases": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "available_slots": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "tenant_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "tenant_active_leases": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "tenant_limit": {
+                  "type": "integer",
+                  "minimum": 1
                 }
               },
               "additionalProperties": false
