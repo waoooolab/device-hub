@@ -192,6 +192,88 @@ def test_allocate_placement_rejects_when_tenant_quota_is_exhausted() -> None:
     assert third["outcome"] == "lease_acquired"
 
 
+def test_allocate_placement_prefers_local_and_falls_back_to_cloud() -> None:
+    svc = DeviceHubService()
+    svc.register_device(
+        "desktop-local",
+        ["compute.comfyui.local"],
+        execution_site="local",
+        region="us-west",
+        cost_tier="balanced",
+    )
+    svc.register_device(
+        "desktop-cloud",
+        ["compute.comfyui.local"],
+        execution_site="cloud",
+        region="us-west",
+        cost_tier="balanced",
+    )
+    req_local = svc.request_pairing("desktop-local")
+    req_cloud = svc.request_pairing("desktop-cloud")
+    svc.approve_pairing(req_local.code)
+    svc.approve_pairing(req_cloud.code)
+    svc.receive_heartbeat("desktop-local")
+    svc.receive_heartbeat("desktop-cloud")
+
+    local_selected = svc.allocate_placement(
+        run_id="run-pref-local-1",
+        task_id="task-pref-local-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-pref-local-1",
+        placement_constraints={"prefer_local": True},
+    )
+    assert local_selected["outcome"] == "lease_acquired"
+    assert local_selected["device_id"] == "desktop-local"
+    assert local_selected.get("reason_code") is None
+
+    cloud_fallback = svc.allocate_placement(
+        run_id="run-pref-local-2",
+        task_id="task-pref-local-2",
+        capability="compute.comfyui.local",
+        trace_id="trace-pref-local-2",
+        placement_constraints={"prefer_local": True},
+    )
+    assert cloud_fallback["outcome"] == "lease_acquired"
+    assert cloud_fallback["device_id"] == "desktop-cloud"
+    assert cloud_fallback["reason_code"] == "local_preference_fallback"
+    assert "fallback" in cloud_fallback["reason"]
+
+
+def test_allocate_placement_rejects_when_region_or_cost_constraints_fail() -> None:
+    svc = DeviceHubService()
+    svc.register_device(
+        "gpu-west-low",
+        ["compute.comfyui.local"],
+        execution_site="cloud",
+        region="us-west",
+        cost_tier="low",
+        estimated_cost_usd=0.6,
+    )
+    req = svc.request_pairing("gpu-west-low")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("gpu-west-low")
+
+    region_miss = svc.allocate_placement(
+        run_id="run-region-miss",
+        task_id="task-region-miss",
+        capability="compute.comfyui.local",
+        trace_id="trace-region-miss",
+        placement_constraints={"region": "eu-central"},
+    )
+    assert region_miss["outcome"] == "rejected"
+    assert region_miss["reason_code"] == "region_unavailable"
+
+    cost_miss = svc.allocate_placement(
+        run_id="run-cost-miss",
+        task_id="task-cost-miss",
+        capability="compute.comfyui.local",
+        trace_id="trace-cost-miss",
+        placement_constraints={"max_cost_usd_hard": 0.5},
+    )
+    assert cost_miss["outcome"] == "rejected"
+    assert cost_miss["reason_code"] == "cost_limit_exceeded"
+
+
 def test_capacity_snapshot_expires_stale_active_lease() -> None:
     svc = DeviceHubService()
     svc.register_device("desktop-stale-lease", ["compute.comfyui.local"])

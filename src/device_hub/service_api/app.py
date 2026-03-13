@@ -75,12 +75,39 @@ def register_device(
 
     device_id = payload.get("device_id")
     capabilities = payload.get("capabilities")
+    execution_site = payload.get("execution_site", "local")
+    region = payload.get("region")
+    cost_tier = payload.get("cost_tier", "balanced")
+    node_pool = payload.get("node_pool")
+    estimated_cost_usd = payload.get("estimated_cost_usd")
     if not isinstance(device_id, str) or not device_id:
         raise HTTPException(status_code=422, detail="payload.device_id must be non-empty string")
     if not isinstance(capabilities, list) or any(not isinstance(c, str) or not c for c in capabilities):
         raise HTTPException(status_code=422, detail="payload.capabilities must be non-empty string list")
+    if not isinstance(execution_site, str) or execution_site not in {"local", "cloud"}:
+        raise HTTPException(status_code=422, detail="payload.execution_site must be 'local' or 'cloud'")
+    if region is not None and (not isinstance(region, str) or not region.strip()):
+        raise HTTPException(status_code=422, detail="payload.region must be non-empty string when provided")
+    if not isinstance(cost_tier, str) or cost_tier not in {"low", "balanced", "high"}:
+        raise HTTPException(status_code=422, detail="payload.cost_tier must be one of low|balanced|high")
+    if node_pool is not None and (not isinstance(node_pool, str) or not node_pool.strip()):
+        raise HTTPException(status_code=422, detail="payload.node_pool must be non-empty string when provided")
+    if estimated_cost_usd is not None and (
+        isinstance(estimated_cost_usd, bool)
+        or not isinstance(estimated_cost_usd, (int, float))
+        or float(estimated_cost_usd) < 0.0
+    ):
+        raise HTTPException(status_code=422, detail="payload.estimated_cost_usd must be number >= 0 when provided")
 
-    rec = _hub.register_device(device_id, capabilities)
+    rec = _hub.register_device(
+        device_id,
+        capabilities,
+        execution_site=execution_site,
+        region=region.strip() if isinstance(region, str) else None,
+        cost_tier=cost_tier,
+        node_pool=node_pool.strip() if isinstance(node_pool, str) else None,
+        estimated_cost_usd=float(estimated_cost_usd) if isinstance(estimated_cost_usd, (int, float)) else None,
+    )
     try:
         validate_runtime_device_status(rec.status)
     except ContractValidationError as exc:
@@ -94,6 +121,11 @@ def register_device(
             "status": rec.status,
             "paired": rec.paired,
             "capabilities": rec.capabilities,
+            "execution_site": rec.execution_site,
+            "region": rec.region,
+            "cost_tier": rec.cost_tier,
+            "node_pool": rec.node_pool,
+            "estimated_cost_usd": rec.estimated_cost_usd,
         },
     )
     return _finalize_event(event)
@@ -316,6 +348,11 @@ def get_device(
             "status": rec.status,
             "paired": rec.paired,
             "capabilities": rec.capabilities,
+            "execution_site": rec.execution_site,
+            "region": rec.region,
+            "cost_tier": rec.cost_tier,
+            "node_pool": rec.node_pool,
+            "estimated_cost_usd": rec.estimated_cost_usd,
             "last_seen_at": rec.last_seen_at,
         },
     }

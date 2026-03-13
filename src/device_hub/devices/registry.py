@@ -10,6 +10,11 @@ from datetime import datetime, timezone
 class DeviceRecord:
     device_id: str
     capabilities: list[str]
+    execution_site: str = "local"
+    region: str | None = None
+    cost_tier: str = "balanced"
+    node_pool: str | None = None
+    estimated_cost_usd: float | None = None
     status: str = "offline"
     paired: bool = False
     last_seen_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -19,8 +24,26 @@ class DeviceRecord:
 class DeviceRegistry:
     devices: dict[str, DeviceRecord] = field(default_factory=dict)
 
-    def register(self, device_id: str, capabilities: list[str]) -> DeviceRecord:
-        rec = DeviceRecord(device_id=device_id, capabilities=capabilities)
+    def register(
+        self,
+        device_id: str,
+        capabilities: list[str],
+        *,
+        execution_site: str = "local",
+        region: str | None = None,
+        cost_tier: str = "balanced",
+        node_pool: str | None = None,
+        estimated_cost_usd: float | None = None,
+    ) -> DeviceRecord:
+        rec = DeviceRecord(
+            device_id=device_id,
+            capabilities=capabilities,
+            execution_site=execution_site,
+            region=region,
+            cost_tier=cost_tier,
+            node_pool=node_pool,
+            estimated_cost_usd=estimated_cost_usd,
+        )
         self.devices[device_id] = rec
         return rec
 

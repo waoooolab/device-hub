@@ -124,6 +124,34 @@ def test_register_and_pair_and_heartbeat_flow() -> None:
     assert heartbeat.json()["payload"]["status"] == "online"
 
 
+def test_register_device_accepts_runtime_metadata_fields() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    register = client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {
+                "device_id": "gpu-node-meta",
+                "capabilities": ["compute.comfyui.local"],
+                "execution_site": "cloud",
+                "region": "us-west",
+                "cost_tier": "low",
+                "node_pool": "spot-a",
+                "estimated_cost_usd": 0.42,
+            }
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert register.status_code == 200
+    payload = register.json()["payload"]
+    assert payload["execution_site"] == "cloud"
+    assert payload["region"] == "us-west"
+    assert payload["cost_tier"] == "low"
+    assert payload["node_pool"] == "spot-a"
+    assert float(payload["estimated_cost_usd"]) == 0.42
+
+
 def test_presence_refresh_marks_device_offline() -> None:
     client = _setup_test_env()
     token = _token(["devices:write", "devices:read"])
@@ -217,6 +245,7 @@ def test_allocate_placement_returns_lease_acquired_event() -> None:
             {
                 "device_id": "gpu-node-1",
                 "capabilities": ["compute.comfyui.local"],
+                "region": "us-west",
             }
         ),
         headers={"Authorization": f"Bearer {token}"},
@@ -270,6 +299,115 @@ def test_allocate_placement_returns_lease_acquired_event() -> None:
     assert event["payload"]["decision"]["device_id"] == "gpu-node-1"
     assert isinstance(event["payload"]["decision"]["lease_id"], str)
     assert isinstance(event["payload"]["decision"]["lease_expires_at"], str)
+
+
+def test_allocate_placement_prefers_local_then_fallbacks_to_cloud_with_trace_fields() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    for payload in (
+        {
+            "device_id": "gpu-local-pref",
+            "capabilities": ["compute.comfyui.local"],
+            "execution_site": "local",
+            "region": "us-west",
+            "cost_tier": "balanced",
+            "node_pool": "local-main",
+            "estimated_cost_usd": 0.0,
+        },
+        {
+            "device_id": "gpu-cloud-pref",
+            "capabilities": ["compute.comfyui.local"],
+            "execution_site": "cloud",
+            "region": "us-west",
+            "cost_tier": "balanced",
+            "node_pool": "cloud-main",
+            "estimated_cost_usd": 0.9,
+        },
+    ):
+        client.post(
+            "/v1/devices/register",
+            json=_command_envelope(payload),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        pair_req = client.post(
+            "/v1/devices/pairing/request",
+            json=_command_envelope({"device_id": payload["device_id"]}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        code = pair_req.json()["payload"]["code"]
+        client.post(
+            "/v1/devices/pairing/approve",
+            json=_command_envelope({"code": code}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        client.post(
+            "/v1/devices/heartbeat",
+            json=_command_envelope({"device_id": payload["device_id"]}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    first = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-pref-local-api-1",
+                "task_id": "task-pref-local-api-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "region": "us-west",
+                        "prefer_local": True,
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+                "load_by_device": {"gpu-local-pref": 2, "gpu-cloud-pref": 1},
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert first.status_code == 200
+    first_decision = first.json()["payload"]["decision"]
+    assert first_decision["outcome"] == "lease_acquired"
+    assert first_decision["device_id"] == "gpu-local-pref"
+    assert "score" in first_decision
+    assert first_decision["resource_snapshot"]["queue_depth"] == 2
+
+    second = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-pref-local-api-2",
+                "task_id": "task-pref-local-api-2",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t2",
+                        "region": "us-west",
+                        "prefer_local": True,
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+                "load_by_device": {"gpu-local-pref": 9, "gpu-cloud-pref": 1},
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert second.status_code == 200
+    second_decision = second.json()["payload"]["decision"]
+    assert second_decision["outcome"] == "lease_acquired"
+    assert second_decision["device_id"] == "gpu-cloud-pref"
+    assert second_decision["reason_code"] == "local_preference_fallback"
+    assert "fallback" in second_decision["reason"]
+    assert "score" in second_decision
+    assert second_decision["resource_snapshot"]["queue_depth"] == 1
 
 
 def test_allocate_placement_returns_route_rejected_event_when_no_device() -> None:

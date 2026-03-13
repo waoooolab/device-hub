@@ -38,13 +38,21 @@ class DeviceHubService:
     max_active_leases_per_tenant: int | None = None
 
     @staticmethod
-    def _rejected_placement(run_id: str, task_id: str, capability: str) -> dict[str, Any]:
+    def _rejected_placement(
+        run_id: str,
+        task_id: str,
+        capability: str,
+        *,
+        reason_code: str = "no_eligible_device",
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        message = reason or f"no eligible device for capability '{capability}'"
         return {
             "run_id": run_id,
             "task_id": task_id,
             "outcome": "rejected",
-            "reason_code": "no_eligible_device",
-            "reason": f"no eligible device for capability '{capability}'",
+            "reason_code": reason_code,
+            "reason": message,
             "capability_match": [capability],
         }
 
@@ -120,6 +128,10 @@ class DeviceHubService:
         device_id: str,
         lease_ttl_seconds: int,
         tenant_id: str | None = None,
+        score: float | None = None,
+        resource_snapshot: dict[str, Any] | None = None,
+        route_reason_code: str | None = None,
+        route_reason: str | None = None,
     ) -> dict[str, Any]:
         self.registry.mark_busy(device_id)
         lease_id = f"lease-{uuid4()}"
@@ -134,7 +146,7 @@ class DeviceHubService:
             lease_expires_at=lease_expires_at,
             tenant_id=tenant_id,
         )
-        return {
+        decision: dict[str, Any] = {
             "run_id": run_id,
             "task_id": task_id,
             "outcome": "lease_acquired",
@@ -144,9 +156,36 @@ class DeviceHubService:
             "capability_match": [capability],
             "trace_id": trace_id,
         }
+        if score is not None:
+            decision["score"] = score
+        if isinstance(resource_snapshot, dict) and resource_snapshot:
+            decision["resource_snapshot"] = dict(resource_snapshot)
+        if route_reason_code:
+            decision["reason_code"] = route_reason_code
+        if route_reason:
+            decision["reason"] = route_reason
+        return decision
 
-    def register_device(self, device_id: str, capabilities: list[str]) -> DeviceRecord:
-        rec = self.registry.register(device_id=device_id, capabilities=capabilities)
+    def register_device(
+        self,
+        device_id: str,
+        capabilities: list[str],
+        *,
+        execution_site: str = "local",
+        region: str | None = None,
+        cost_tier: str = "balanced",
+        node_pool: str | None = None,
+        estimated_cost_usd: float | None = None,
+    ) -> DeviceRecord:
+        rec = self.registry.register(
+            device_id=device_id,
+            capabilities=capabilities,
+            execution_site=execution_site,
+            region=region,
+            cost_tier=cost_tier,
+            node_pool=node_pool,
+            estimated_cost_usd=estimated_cost_usd,
+        )
         for capability in capabilities:
             self.capabilities.bind(device_id, capability)
         return rec
@@ -181,6 +220,120 @@ class DeviceHubService:
             if rec and rec.paired and rec.status in {"paired", "online", "busy", "degraded"}:
                 active_ids.append(device_id)
         return active_ids
+
+    def _filter_candidates_by_constraints(
+        self,
+        *,
+        candidate_ids: list[str],
+        placement_constraints: dict[str, Any] | None,
+    ) -> tuple[list[str], str | None]:
+        if not placement_constraints:
+            return list(candidate_ids), None
+        filtered = list(candidate_ids)
+        region = placement_constraints.get("region")
+        if isinstance(region, str) and region.strip():
+            expected = region.strip().lower()
+            filtered = [
+                device_id
+                for device_id in filtered
+                if (self.registry.devices.get(device_id) and (self.registry.devices[device_id].region or "").lower() == expected)
+            ]
+            if not filtered:
+                return [], "region_unavailable"
+        node_pool = placement_constraints.get("node_pool")
+        if isinstance(node_pool, str) and node_pool.strip():
+            expected_pool = node_pool.strip().lower()
+            filtered = [
+                device_id
+                for device_id in filtered
+                if (self.registry.devices.get(device_id) and (self.registry.devices[device_id].node_pool or "").lower() == expected_pool)
+            ]
+            if not filtered:
+                return [], "node_pool_unavailable"
+        cost_tier = placement_constraints.get("cost_tier")
+        if isinstance(cost_tier, str) and cost_tier.strip():
+            expected_tier = cost_tier.strip().lower()
+            filtered = [
+                device_id
+                for device_id in filtered
+                if (self.registry.devices.get(device_id) and self.registry.devices[device_id].cost_tier.lower() == expected_tier)
+            ]
+            if not filtered:
+                return [], "cost_tier_unavailable"
+        max_cost_usd_hard = placement_constraints.get("max_cost_usd_hard")
+        if isinstance(max_cost_usd_hard, (int, float)) and not isinstance(max_cost_usd_hard, bool):
+            hard_limit = float(max_cost_usd_hard)
+            filtered = [
+                device_id
+                for device_id in filtered
+                if (
+                    self.registry.devices.get(device_id)
+                    and self.registry.devices[device_id].estimated_cost_usd is not None
+                    and float(self.registry.devices[device_id].estimated_cost_usd or 0.0) <= hard_limit
+                )
+            ]
+            if not filtered:
+                return [], "cost_limit_exceeded"
+        return filtered, None
+
+    def _apply_locality_preference(
+        self,
+        *,
+        candidate_ids: list[str],
+        placement_constraints: dict[str, Any] | None,
+    ) -> tuple[list[str], str | None, str | None]:
+        if not candidate_ids:
+            return [], None, None
+        prefer_local = False
+        if isinstance(placement_constraints, dict):
+            prefer_local = placement_constraints.get("prefer_local") is True
+        if not prefer_local:
+            return list(candidate_ids), None, None
+
+        local_ids: list[str] = []
+        remote_ids: list[str] = []
+        for device_id in candidate_ids:
+            rec = self.registry.devices.get(device_id)
+            if rec is None:
+                continue
+            if rec.execution_site == "local":
+                local_ids.append(device_id)
+            else:
+                remote_ids.append(device_id)
+        if local_ids:
+            return local_ids, None, None
+        if remote_ids:
+            return (
+                remote_ids,
+                "local_preference_fallback",
+                "no local device available; fallback to non-local device",
+            )
+        return [], None, None
+
+    def _resolve_capacity(
+        self,
+        *,
+        candidate_ids: list[str],
+    ) -> tuple[list[str], int]:
+        active_lease_devices = self._active_lease_device_ids()
+        active_candidate_devices = {device_id for device_id in candidate_ids if device_id in active_lease_devices}
+        available_ids = [device_id for device_id in candidate_ids if device_id not in active_lease_devices]
+        return available_ids, len(active_candidate_devices)
+
+    def _device_selection_score(
+        self,
+        *,
+        device_id: str,
+        load_by_device: dict[str, int] | None,
+        had_fallback: bool,
+    ) -> float:
+        rec = self.registry.devices.get(device_id)
+        queue_depth = 0
+        if load_by_device and device_id in load_by_device:
+            queue_depth = max(0, int(load_by_device.get(device_id, 0)))
+        load_component = 1.0 / (1.0 + float(queue_depth))
+        locality_component = 1.0 if rec and rec.execution_site == "local" and not had_fallback else 0.7
+        return round(max(0.0, min(1.0, load_component * locality_component)), 6)
 
     def _active_lease_device_ids(self) -> set[str]:
         return {lease.device_id for lease in self.leases.values() if lease.status == "active"}
@@ -271,12 +424,61 @@ class DeviceHubService:
         load_by_device: dict[str, int] | None = None,
         lease_ttl_seconds: int = 300,
         tenant_id: str | None = None,
+        placement_constraints: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Select a device and mint a short-lived lease descriptor."""
         self._expire_due_leases()
         eligible_ids = self._eligible_devices_for_capability(capability)
         if not eligible_ids:
             return self._rejected_placement(run_id, task_id, capability)
+
+        constrained_ids, constraint_reason_code = self._filter_candidates_by_constraints(
+            candidate_ids=eligible_ids,
+            placement_constraints=placement_constraints,
+        )
+        if not constrained_ids:
+            if constraint_reason_code == "region_unavailable":
+                return self._rejected_placement(
+                    run_id,
+                    task_id,
+                    capability,
+                    reason_code="region_unavailable",
+                    reason="no eligible device matches placement_constraints.region",
+                )
+            if constraint_reason_code == "node_pool_unavailable":
+                return self._rejected_placement(
+                    run_id,
+                    task_id,
+                    capability,
+                    reason_code="node_pool_unavailable",
+                    reason="no eligible device matches placement_constraints.node_pool",
+                )
+            if constraint_reason_code == "cost_tier_unavailable":
+                return self._rejected_placement(
+                    run_id,
+                    task_id,
+                    capability,
+                    reason_code="cost_tier_unavailable",
+                    reason="no eligible device matches placement_constraints.cost_tier",
+                )
+            if constraint_reason_code == "cost_limit_exceeded":
+                return self._rejected_placement(
+                    run_id,
+                    task_id,
+                    capability,
+                    reason_code="cost_limit_exceeded",
+                    reason="no eligible device satisfies placement_constraints.max_cost_usd_hard",
+                )
+            return self._rejected_placement(run_id, task_id, capability)
+
+        constrained_pool_ids = list(constrained_ids)
+        constrained_ids, fallback_reason_code, fallback_reason = self._apply_locality_preference(
+            candidate_ids=constrained_ids,
+            placement_constraints=placement_constraints,
+        )
+        if not constrained_ids:
+            return self._rejected_placement(run_id, task_id, capability)
+
         normalized_tenant_id = tenant_id.strip() if isinstance(tenant_id, str) else ""
         tenant_limit = self.max_active_leases_per_tenant
         if tenant_limit is not None and tenant_limit > 0 and normalized_tenant_id:
@@ -290,19 +492,51 @@ class DeviceHubService:
                     tenant_active_leases=tenant_active_leases,
                     tenant_limit=tenant_limit,
                 )
-        active_lease_devices = self._active_lease_device_ids()
-        available_ids = [device_id for device_id in eligible_ids if device_id not in active_lease_devices]
+        available_ids, active_candidate_leases = self._resolve_capacity(candidate_ids=constrained_ids)
+        prefer_local = (
+            isinstance(placement_constraints, dict)
+            and placement_constraints.get("prefer_local") is True
+        )
+        if not available_ids and prefer_local and fallback_reason_code is None:
+            remote_candidate_ids = [
+                device_id
+                for device_id in constrained_pool_ids
+                if (
+                    self.registry.devices.get(device_id)
+                    and self.registry.devices[device_id].execution_site != "local"
+                )
+            ]
+            if remote_candidate_ids:
+                remote_available_ids, remote_active_leases = self._resolve_capacity(
+                    candidate_ids=remote_candidate_ids
+                )
+                if remote_available_ids:
+                    available_ids = remote_available_ids
+                    active_candidate_leases = remote_active_leases
+                    fallback_reason_code = "local_preference_fallback"
+                    fallback_reason = (
+                        "no local device has free capacity; fallback to non-local device"
+                    )
         if not available_ids:
+            capacity_eligible = len(constrained_pool_ids) if prefer_local else len(constrained_ids)
             return self._rejected_capacity(
                 run_id,
                 task_id,
                 capability,
-                eligible_devices=len(eligible_ids),
-                active_leases=len(active_lease_devices),
+                eligible_devices=capacity_eligible,
+                active_leases=active_candidate_leases,
             )
         device_id = choose_device(available_ids, load_by_device=load_by_device)
         if not device_id:
             return self._rejected_placement(run_id, task_id, capability)
+        queue_depth = 0
+        if load_by_device and device_id in load_by_device:
+            queue_depth = max(0, int(load_by_device.get(device_id, 0)))
+        score = self._device_selection_score(
+            device_id=device_id,
+            load_by_device=load_by_device,
+            had_fallback=fallback_reason_code is not None,
+        )
         return self._acquired_placement(
             run_id=run_id,
             task_id=task_id,
@@ -311,6 +545,10 @@ class DeviceHubService:
             device_id=device_id,
             lease_ttl_seconds=lease_ttl_seconds,
             tenant_id=normalized_tenant_id or None,
+            score=score,
+            resource_snapshot={"queue_depth": queue_depth},
+            route_reason_code=fallback_reason_code,
+            route_reason=fallback_reason,
         )
 
     def release_lease(self, lease_id: str) -> dict[str, Any]:

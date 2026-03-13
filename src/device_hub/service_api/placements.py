@@ -42,19 +42,40 @@ def _allocation_decision_payload(decision: dict[str, Any], capability: str) -> d
     outcome = str(decision["outcome"])
     capability_match = list(decision.get("capability_match", [capability]))
     if outcome == "lease_acquired":
-        return {
+        payload: dict[str, Any] = {
             "outcome": outcome,
             "device_id": str(decision["device_id"]),
             "lease_id": str(decision["lease_id"]),
             "lease_expires_at": str(decision["lease_expires_at"]),
             "capability_match": capability_match,
         }
-    return {
+        score = decision.get("score")
+        if isinstance(score, (int, float)) and not isinstance(score, bool):
+            payload["score"] = float(score)
+        resource_snapshot = decision.get("resource_snapshot")
+        if isinstance(resource_snapshot, dict):
+            queue_depth = resource_snapshot.get("queue_depth")
+            if isinstance(queue_depth, int):
+                payload["resource_snapshot"] = {"queue_depth": queue_depth}
+        reason_code = decision.get("reason_code")
+        if isinstance(reason_code, str) and reason_code.strip():
+            payload["reason_code"] = reason_code
+        reason = decision.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            payload["reason"] = reason
+        return payload
+    payload = {
         "outcome": outcome,
         "reason_code": str(decision["reason_code"]),
         "reason": str(decision["reason"]),
         "capability_match": capability_match,
     }
+    resource_snapshot = decision.get("resource_snapshot")
+    if isinstance(resource_snapshot, dict):
+        queue_depth = resource_snapshot.get("queue_depth")
+        if isinstance(queue_depth, int):
+            payload["resource_snapshot"] = {"queue_depth": queue_depth}
+    return payload
 
 
 def _placement_request(
@@ -136,6 +157,9 @@ def allocate_placement_response(
         load_by_device=load_by_device,
         lease_ttl_seconds=lease_ttl_seconds,
         tenant_id=tenant_id,
+        placement_constraints=execution_profile.get("placement_constraints")
+        if isinstance(execution_profile.get("placement_constraints"), dict)
+        else None,
     )
     event = _allocation_event(
         envelope,
