@@ -78,6 +78,24 @@ def test_route_command_preserves_trace_id():
     assert routed["device_id"] == "desktop-trace"
     assert routed["trace_id"] == "trace-route-1"
     assert routed["command_type"] == "tool.exec"
+    assert routed["outcome"] == "selected"
+    assert routed["capability_match"] == ["compute.comfyui.local"]
+    assert routed["resource_snapshot"]["eligible_devices"] >= 1
+
+
+def test_route_command_decision_returns_rejected_when_no_eligible_device() -> None:
+    svc = DeviceHubService()
+    decision = svc.route_command_decision(
+        capability="compute.comfyui.local",
+        command_type="tool.exec",
+        payload={"x": 1},
+        trace_id="trace-route-none",
+    )
+    assert decision["outcome"] == "rejected"
+    assert decision["reason_code"] == "no_eligible_device"
+    snapshot = decision["resource_snapshot"]
+    assert snapshot["eligible_devices"] == 0
+    assert snapshot["available_slots"] == 0
 
 
 def test_allocate_placement_returns_rejected_when_no_candidate():

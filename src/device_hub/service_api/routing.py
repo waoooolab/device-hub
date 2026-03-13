@@ -72,17 +72,27 @@ def _route_payload(payload: dict[str, Any]) -> tuple[str, str, dict[str, Any], d
     return capability, command_type, command_payload, load_by_device
 
 
-def _route_event(envelope: dict[str, Any], capability: str, routed: dict[str, Any] | None) -> dict[str, Any]:
+def _route_event(
+    envelope: dict[str, Any],
+    capability: str,
+    routed: dict[str, Any] | None,
+    *,
+    decision: dict[str, Any],
+) -> dict[str, Any]:
     if routed is None:
         return build_event(
             envelope,
             event_type="device.route.miss",
-            payload={"capability": capability, "reason": "no_eligible_device"},
+            payload={
+                "capability": capability,
+                "reason": str(decision.get("reason", "no_eligible_device")),
+                "decision": decision,
+            },
         )
     return build_event(
         envelope,
         event_type="device.route.selected",
-        payload={"route": routed},
+        payload={"route": routed, "decision": decision},
     )
 
 
@@ -98,6 +108,13 @@ def route_command_response(
         required_fields=["capability", "command_type", "command_payload"],
     )
     capability, command_type, command_payload, load_by_device = _route_payload(payload)
+    decision = hub.route_command_decision(
+        capability=capability,
+        command_type=command_type,
+        payload=command_payload,
+        trace_id=str(envelope["trace_id"]),
+        load_by_device=load_by_device,
+    )
     routed = hub.route_command(
         capability=capability,
         command_type=command_type,
@@ -105,4 +122,11 @@ def route_command_response(
         trace_id=str(envelope["trace_id"]),
         load_by_device=load_by_device,
     )
-    return finalize_event(_route_event(envelope, capability, routed))
+    return finalize_event(
+        _route_event(
+            envelope,
+            capability,
+            routed,
+            decision=decision,
+        )
+    )

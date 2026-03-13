@@ -268,6 +268,39 @@ def test_route_command_selects_low_load_device() -> None:
     assert route.json()["event_type"] == "device.route.selected"
     assert route.json()["payload"]["route"]["device_id"] == "desktop-b"
     assert route.json()["payload"]["route"]["trace_id"] == "trace-device-1"
+    decision = route.json()["payload"]["decision"]
+    assert decision["outcome"] == "selected"
+    assert decision["device_id"] == "desktop-b"
+    assert decision["capability_match"] == ["compute.comfyui.local"]
+    snapshot = decision["resource_snapshot"]
+    assert snapshot["queue_depth"] == 1
+    assert snapshot["eligible_devices"] == 2
+
+
+def test_route_command_returns_route_miss_with_structured_decision() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+    response = client.post(
+        "/v1/devices/route",
+        json=_command_envelope(
+            {
+                "capability": "compute.comfyui.local",
+                "command_type": "tool.exec",
+                "command_payload": {"x": 1},
+            }
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    event = response.json()
+    assert event["event_type"] == "device.route.miss"
+    assert event["payload"]["capability"] == "compute.comfyui.local"
+    decision = event["payload"]["decision"]
+    assert decision["outcome"] == "rejected"
+    assert decision["reason_code"] == "no_eligible_device"
+    snapshot = decision["resource_snapshot"]
+    assert snapshot["eligible_devices"] == 0
+    assert snapshot["available_slots"] == 0
 
 
 def test_allocate_placement_returns_lease_acquired_event() -> None:

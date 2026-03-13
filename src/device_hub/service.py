@@ -474,9 +474,18 @@ class DeviceHubService:
         load_by_device: dict[str, int] | None = None,
     ) -> dict[str, Any] | None:
         """Build a routed command envelope while preserving trace id."""
-        device_id = self.route_capability(capability, load_by_device=load_by_device)
-        if not device_id:
+        decision = self.route_command_decision(
+            capability=capability,
+            command_type=command_type,
+            payload=payload,
+            trace_id=trace_id,
+            load_by_device=load_by_device,
+        )
+        if decision.get("outcome") != "selected":
             return None
+        device_id = str(decision["device_id"])
+        score = decision.get("score")
+        resource_snapshot = decision.get("resource_snapshot")
         return {
             "command_id": f"cmd-{uuid4()}",
             "command_type": command_type,
@@ -484,6 +493,75 @@ class DeviceHubService:
             "capability": capability,
             "trace_id": trace_id,
             "payload": payload,
+            "outcome": "selected",
+            "capability_match": [capability],
+            "score": score,
+            "resource_snapshot": resource_snapshot,
+        }
+
+    def route_command_decision(
+        self,
+        *,
+        capability: str,
+        command_type: str,
+        payload: dict[str, Any],
+        trace_id: str,
+        load_by_device: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        """Compute structured route decision with traceable resource snapshot."""
+        _ = (command_type, payload, trace_id)
+        self._expire_due_leases()
+        candidate_ids = self._eligible_devices_for_capability(capability)
+        if not candidate_ids:
+            return {
+                "outcome": "rejected",
+                "reason_code": "no_eligible_device",
+                "reason": f"no eligible device for capability '{capability}'",
+                "capability_match": [capability],
+                "resource_snapshot": {
+                    "eligible_devices": 0,
+                    "active_leases": 0,
+                    "available_slots": 0,
+                    "queue_depth": 0,
+                },
+            }
+
+        active_lease_devices = self._active_lease_device_ids()
+        active_candidate_leases = sum(1 for device_id in candidate_ids if device_id in active_lease_devices)
+        available_ids = [device_id for device_id in candidate_ids if device_id not in active_lease_devices]
+        device_id = choose_device(candidate_ids, load_by_device=load_by_device)
+        if not device_id:
+            return {
+                "outcome": "rejected",
+                "reason_code": "route_unavailable",
+                "reason": "unable to select device from eligible route set",
+                "capability_match": [capability],
+                "resource_snapshot": {
+                    "eligible_devices": len(candidate_ids),
+                    "active_leases": active_candidate_leases,
+                    "available_slots": len(available_ids),
+                    "queue_depth": 0,
+                },
+            }
+        queue_depth = 0
+        if load_by_device and device_id in load_by_device:
+            queue_depth = max(0, int(load_by_device.get(device_id, 0)))
+        score = self._device_selection_score(
+            device_id=device_id,
+            load_by_device=load_by_device,
+            had_fallback=False,
+        )
+        return {
+            "outcome": "selected",
+            "device_id": device_id,
+            "capability_match": [capability],
+            "score": score,
+            "resource_snapshot": {
+                "eligible_devices": len(candidate_ids),
+                "active_leases": active_candidate_leases,
+                "available_slots": len(available_ids),
+                "queue_depth": queue_depth,
+            },
         }
 
     def placement_capacity_snapshot(self) -> dict[str, Any]:
