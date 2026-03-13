@@ -9,7 +9,11 @@ from fastapi import HTTPException
 from device_hub.devices.heartbeat import refresh_presence
 from device_hub.service import DeviceHubService
 
-from .contracts import validate_runtime_device_status
+from .contracts import (
+    ContractValidationError,
+    validate_device_route_event_contract,
+    validate_runtime_device_status,
+)
 from .support import build_event, extract_payload, finalize_event, validate_write
 
 
@@ -74,26 +78,28 @@ def _route_payload(payload: dict[str, Any]) -> tuple[str, str, dict[str, Any], d
 
 def _route_event(
     envelope: dict[str, Any],
-    capability: str,
     routed: dict[str, Any] | None,
     *,
+    run_id: str,
+    task_id: str,
+    placement_request_id: str,
     decision: dict[str, Any],
 ) -> dict[str, Any]:
-    if routed is None:
-        return build_event(
-            envelope,
-            event_type="device.route.rejected",
-            payload={
-                "capability": capability,
-                "reason": str(decision.get("reason", "no_eligible_device")),
-                "decision": decision,
-            },
-        )
-    return build_event(
+    event = build_event(
         envelope,
-        event_type="device.route.selected",
-        payload={"route": routed, "decision": decision},
+        event_type="device.route.selected" if routed is not None else "device.route.rejected",
+        payload={
+            "run_id": run_id,
+            "task_id": task_id,
+            "placement_request_id": placement_request_id,
+            "decision": decision,
+        },
     )
+    try:
+        validate_device_route_event_contract(event)
+    except ContractValidationError as exc:
+        raise HTTPException(status_code=500, detail=f"invalid route event: {exc}") from exc
+    return event
 
 
 def route_command_response(
@@ -108,6 +114,17 @@ def route_command_response(
         required_fields=["capability", "command_type", "command_payload"],
     )
     capability, command_type, command_payload, load_by_device = _route_payload(payload)
+    run_id = payload.get("run_id")
+    if not isinstance(run_id, str) or not run_id.strip():
+        run_id = f"route:{envelope['command_id']}"
+    else:
+        run_id = run_id.strip()
+    task_id = payload.get("task_id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        task_id = f"{run_id}:root"
+    else:
+        task_id = task_id.strip()
+    placement_request_id = str(envelope.get("correlation_id") or envelope["command_id"])
     decision = hub.route_command_decision(
         capability=capability,
         command_type=command_type,
@@ -126,8 +143,10 @@ def route_command_response(
     return finalize_event(
         _route_event(
             envelope,
-            capability,
             routed,
+            run_id=run_id,
+            task_id=task_id,
+            placement_request_id=placement_request_id,
             decision=decision,
         )
     )

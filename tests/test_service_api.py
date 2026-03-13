@@ -252,23 +252,28 @@ def test_route_command_selects_low_load_device() -> None:
             headers={"Authorization": f"Bearer {token}"},
         )
 
+    route_envelope = _command_envelope(
+        {
+            "run_id": "run-route-1",
+            "task_id": "task-route-1",
+            "capability": "compute.comfyui.local",
+            "command_type": "tool.exec",
+            "command_payload": {"x": 1},
+            "load_by_device": {"desktop-a": 5, "desktop-b": 1},
+        }
+    )
     route = client.post(
         "/v1/devices/route",
-        json=_command_envelope(
-            {
-                "capability": "compute.comfyui.local",
-                "command_type": "tool.exec",
-                "command_payload": {"x": 1},
-                "load_by_device": {"desktop-a": 5, "desktop-b": 1},
-            }
-        ),
+        json=route_envelope,
         headers={"Authorization": f"Bearer {token}"},
     )
     assert route.status_code == 200
-    assert route.json()["event_type"] == "device.route.selected"
-    assert route.json()["payload"]["route"]["device_id"] == "desktop-b"
-    assert route.json()["payload"]["route"]["trace_id"] == "trace-device-1"
-    decision = route.json()["payload"]["decision"]
+    event = route.json()
+    assert event["event_type"] == "device.route.selected"
+    assert event["payload"]["run_id"] == "run-route-1"
+    assert event["payload"]["task_id"] == "task-route-1"
+    assert event["payload"]["placement_request_id"] == route_envelope["command_id"]
+    decision = event["payload"]["decision"]
     assert decision["outcome"] == "selected"
     assert decision["device_id"] == "desktop-b"
     assert decision["capability_match"] == ["compute.comfyui.local"]
@@ -280,21 +285,24 @@ def test_route_command_selects_low_load_device() -> None:
 def test_route_command_returns_route_rejected_with_structured_decision() -> None:
     client = _setup_test_env()
     token = _token(["devices:write", "devices:read"])
+    route_envelope = _command_envelope(
+        {
+            "capability": "compute.comfyui.local",
+            "command_type": "tool.exec",
+            "command_payload": {"x": 1},
+        }
+    )
     response = client.post(
         "/v1/devices/route",
-        json=_command_envelope(
-            {
-                "capability": "compute.comfyui.local",
-                "command_type": "tool.exec",
-                "command_payload": {"x": 1},
-            }
-        ),
+        json=route_envelope,
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
     event = response.json()
     assert event["event_type"] == "device.route.rejected"
-    assert event["payload"]["capability"] == "compute.comfyui.local"
+    assert event["payload"]["run_id"] == f"route:{route_envelope['command_id']}"
+    assert event["payload"]["task_id"] == f"route:{route_envelope['command_id']}:root"
+    assert event["payload"]["placement_request_id"] == route_envelope["command_id"]
     decision = event["payload"]["decision"]
     assert decision["outcome"] == "rejected"
     assert decision["reason_code"] == "no_eligible_device"
