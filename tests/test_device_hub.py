@@ -357,6 +357,13 @@ def test_capacity_snapshot_expires_stale_active_lease() -> None:
     snapshot = svc.placement_capacity_snapshot()
     assert snapshot["active_leases"] == 0
     assert snapshot["available_slots"] >= 1
+    assert snapshot["lease_status_counts"]["active"] == 0
+    assert snapshot["lease_status_counts"]["expired"] >= 1
+    assert snapshot["lease_status_counts"]["released"] == 0
+    assert snapshot["lease_expired_total"] >= 1
+    assert snapshot["lease_expire_sweeps_total"] >= 1
+    assert snapshot["lease_expire_last_sweep_expired"] >= 1
+    assert isinstance(snapshot["lease_expire_last_sweep_at"], str)
     assert svc.leases[lease_id].status == "expired"
     assert svc.leases[lease_id].expire_reason_code == "ttl_expired"
 

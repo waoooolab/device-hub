@@ -36,6 +36,10 @@ class DeviceHubService:
     pairing: PairingManager = field(default_factory=PairingManager)
     leases: dict[str, LeaseRecord] = field(default_factory=dict)
     max_active_leases_per_tenant: int | None = None
+    lease_expire_sweeps_total: int = 0
+    lease_expired_total: int = 0
+    lease_expire_last_sweep_at: str | None = None
+    lease_expire_last_sweep_expired: int = 0
 
     @staticmethod
     def _rejected_placement(
@@ -350,6 +354,7 @@ class DeviceHubService:
 
     def _expire_due_leases(self) -> int:
         now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
         expired_count = 0
         for lease in self.leases.values():
             if lease.status != "active":
@@ -358,11 +363,16 @@ class DeviceHubService:
             if expires_at is None or expires_at > now:
                 continue
             lease.status = "expired"
-            lease.expired_at = now.isoformat()
+            lease.expired_at = now_iso
             lease.expire_reason_code = "ttl_expired"
             if lease.device_id in self.registry.devices:
                 self.registry.heartbeat(lease.device_id)
             expired_count += 1
+        self.lease_expire_sweeps_total += 1
+        self.lease_expire_last_sweep_at = now_iso
+        self.lease_expire_last_sweep_expired = expired_count
+        if expired_count > 0:
+            self.lease_expired_total += expired_count
         return expired_count
 
     def route_command(
@@ -396,9 +406,15 @@ class DeviceHubService:
                 eligible_devices += 1
 
         active_leases = 0
+        released_leases = 0
+        expired_leases = 0
         for lease in self.leases.values():
             if lease.status == "active":
                 active_leases += 1
+            elif lease.status == "released":
+                released_leases += 1
+            elif lease.status == "expired":
+                expired_leases += 1
 
         available_slots = max(eligible_devices - active_leases, 0)
         if eligible_devices > 0:
@@ -409,8 +425,17 @@ class DeviceHubService:
             "total_devices": total_devices,
             "eligible_devices": eligible_devices,
             "active_leases": active_leases,
+            "lease_status_counts": {
+                "active": active_leases,
+                "released": released_leases,
+                "expired": expired_leases,
+            },
             "available_slots": available_slots,
             "lease_utilization": lease_utilization,
+            "lease_expire_sweeps_total": self.lease_expire_sweeps_total,
+            "lease_expired_total": self.lease_expired_total,
+            "lease_expire_last_sweep_at": self.lease_expire_last_sweep_at,
+            "lease_expire_last_sweep_expired": self.lease_expire_last_sweep_expired,
             "ts": datetime.now(timezone.utc).isoformat(),
         }
 
