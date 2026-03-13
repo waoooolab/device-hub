@@ -472,15 +472,17 @@ class DeviceHubService:
         payload: dict[str, Any],
         trace_id: str,
         load_by_device: dict[str, int] | None = None,
+        decision: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Build a routed command envelope while preserving trace id."""
-        decision = self.route_command_decision(
-            capability=capability,
-            command_type=command_type,
-            payload=payload,
-            trace_id=trace_id,
-            load_by_device=load_by_device,
-        )
+        if decision is None:
+            decision = self.route_command_decision(
+                capability=capability,
+                command_type=command_type,
+                payload=payload,
+                trace_id=trace_id,
+                load_by_device=load_by_device,
+            )
         if decision.get("outcome") != "selected":
             return None
         device_id = str(decision["device_id"])

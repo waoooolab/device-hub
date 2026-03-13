@@ -277,7 +277,7 @@ def test_route_command_selects_low_load_device() -> None:
     assert snapshot["eligible_devices"] == 2
 
 
-def test_route_command_returns_route_miss_with_structured_decision() -> None:
+def test_route_command_returns_route_rejected_with_structured_decision() -> None:
     client = _setup_test_env()
     token = _token(["devices:write", "devices:read"])
     response = client.post(
@@ -293,7 +293,7 @@ def test_route_command_returns_route_miss_with_structured_decision() -> None:
     )
     assert response.status_code == 200
     event = response.json()
-    assert event["event_type"] == "device.route.miss"
+    assert event["event_type"] == "device.route.rejected"
     assert event["payload"]["capability"] == "compute.comfyui.local"
     decision = event["payload"]["decision"]
     assert decision["outcome"] == "rejected"

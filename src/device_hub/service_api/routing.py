@@ -82,7 +82,7 @@ def _route_event(
     if routed is None:
         return build_event(
             envelope,
-            event_type="device.route.miss",
+            event_type="device.route.rejected",
             payload={
                 "capability": capability,
                 "reason": str(decision.get("reason", "no_eligible_device")),
@@ -121,6 +121,7 @@ def route_command_response(
         payload=command_payload,
         trace_id=str(envelope["trace_id"]),
         load_by_device=load_by_device,
+        decision=decision,
     )
     return finalize_event(
         _route_event(
