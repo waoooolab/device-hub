@@ -672,6 +672,112 @@ def test_allocate_placement_returns_route_rejected_event_when_capacity_exhausted
     assert snapshot["available_slots"] == 0
 
 
+def test_allocate_placement_recovers_concurrent_capacity_retries_after_invalid_expiry_reconciliation() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    for device_id in (
+        "gpu-node-concurrent-invalid-expiry-a",
+        "gpu-node-concurrent-invalid-expiry-b",
+    ):
+        client.post(
+            "/v1/devices/register",
+            json=_command_envelope(
+                {
+                    "device_id": device_id,
+                    "capabilities": ["compute.comfyui.local"],
+                }
+            ),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        pair_req = client.post(
+            "/v1/devices/pairing/request",
+            json=_command_envelope({"device_id": device_id}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        code = pair_req.json()["payload"]["code"]
+        client.post(
+            "/v1/devices/pairing/approve",
+            json=_command_envelope({"code": code}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        client.post(
+            "/v1/devices/heartbeat",
+            json=_command_envelope({"device_id": device_id}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    def _allocate(run_suffix: str):
+        return client.post(
+            "/v1/placements/allocate",
+            json=_command_envelope(
+                {
+                    "run_id": f"run-concurrent-invalid-expiry-{run_suffix}",
+                    "task_id": f"task-concurrent-invalid-expiry-{run_suffix}",
+                    "execution_profile": {
+                        "execution_mode": "compute",
+                        "inference_target": "none",
+                        "resource_class": "gpu",
+                        "placement_constraints": {
+                            "tenant_id": "t1",
+                            "required_capabilities": ["compute.comfyui.local"],
+                        },
+                    },
+                },
+                command_type="device.placement.allocate",
+            ),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    first = _allocate("1")
+    second = _allocate("2")
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["event_type"] == "device.lease.acquired"
+    assert second.json()["event_type"] == "device.lease.acquired"
+    first_lease_id = first.json()["payload"]["decision"]["lease_id"]
+    second_lease_id = second.json()["payload"]["decision"]["lease_id"]
+    assert first_lease_id != second_lease_id
+
+    third_rejected = _allocate("3")
+    fourth_rejected = _allocate("4")
+    assert third_rejected.status_code == 200
+    assert fourth_rejected.status_code == 200
+    assert third_rejected.json()["event_type"] == "device.route.rejected"
+    assert fourth_rejected.json()["event_type"] == "device.route.rejected"
+    assert third_rejected.json()["payload"]["decision"]["reason_code"] == "capacity_exhausted"
+    assert fourth_rejected.json()["payload"]["decision"]["reason_code"] == "capacity_exhausted"
+
+    app_module._hub.leases[first_lease_id].lease_expires_at = "invalid-datetime"
+    app_module._hub.leases[second_lease_id].lease_expires_at = "invalid-datetime"
+
+    recovered_a = _allocate("5")
+    recovered_b = _allocate("6")
+    assert recovered_a.status_code == 200
+    assert recovered_b.status_code == 200
+    assert recovered_a.json()["event_type"] == "device.lease.acquired"
+    assert recovered_b.json()["event_type"] == "device.lease.acquired"
+    recovered_lease_a = recovered_a.json()["payload"]["decision"]["lease_id"]
+    recovered_lease_b = recovered_b.json()["payload"]["decision"]["lease_id"]
+    assert recovered_lease_a not in {first_lease_id, second_lease_id}
+    assert recovered_lease_b not in {first_lease_id, second_lease_id}
+    assert recovered_lease_a != recovered_lease_b
+
+    for lease_id in (first_lease_id, second_lease_id):
+        lease = app_module._hub.leases[lease_id]
+        assert lease.status == "expired"
+        assert lease.expire_reason_code == "ttl_expired"
+
+    capacity = client.get(
+        "/v1/placements/capacity",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert capacity.status_code == 200
+    payload = capacity.json()
+    assert payload["active_leases"] == 2
+    assert payload["lease_status_counts"]["expired"] >= 2
+
+
 def test_allocate_placement_returns_route_rejected_event_when_tenant_quota_exhausted() -> None:
     client = _setup_test_env()
     app_module._hub = DeviceHubService(max_active_leases_per_tenant=1)

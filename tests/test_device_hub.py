@@ -711,3 +711,79 @@ def test_allocate_placement_recovers_capacity_when_existing_lease_expiry_is_inva
     assert second["outcome"] == "lease_acquired"
     assert second["lease_id"] != first_lease_id
     assert svc.leases[first_lease_id].status == "expired"
+
+
+def test_concurrent_capacity_retries_recover_after_multiple_invalid_expiry_leases() -> None:
+    svc = DeviceHubService()
+    for device_id in (
+        "desktop-concurrent-invalid-expiry-recover-a",
+        "desktop-concurrent-invalid-expiry-recover-b",
+    ):
+        svc.register_device(device_id, ["compute.comfyui.local"])
+        req = svc.request_pairing(device_id)
+        svc.approve_pairing(req.code)
+        svc.receive_heartbeat(device_id)
+
+    first = svc.allocate_placement(
+        run_id="run-concurrent-invalid-expiry-recover-1",
+        task_id="task-concurrent-invalid-expiry-recover-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-concurrent-invalid-expiry-recover-1",
+    )
+    second = svc.allocate_placement(
+        run_id="run-concurrent-invalid-expiry-recover-2",
+        task_id="task-concurrent-invalid-expiry-recover-2",
+        capability="compute.comfyui.local",
+        trace_id="trace-concurrent-invalid-expiry-recover-2",
+    )
+    assert first["outcome"] == "lease_acquired"
+    assert second["outcome"] == "lease_acquired"
+    first_lease_id = first["lease_id"]
+    second_lease_id = second["lease_id"]
+    assert first_lease_id != second_lease_id
+
+    third_rejected = svc.allocate_placement(
+        run_id="run-concurrent-invalid-expiry-recover-3",
+        task_id="task-concurrent-invalid-expiry-recover-3",
+        capability="compute.comfyui.local",
+        trace_id="trace-concurrent-invalid-expiry-recover-3",
+    )
+    fourth_rejected = svc.allocate_placement(
+        run_id="run-concurrent-invalid-expiry-recover-4",
+        task_id="task-concurrent-invalid-expiry-recover-4",
+        capability="compute.comfyui.local",
+        trace_id="trace-concurrent-invalid-expiry-recover-4",
+    )
+    assert third_rejected["outcome"] == "rejected"
+    assert fourth_rejected["outcome"] == "rejected"
+    assert third_rejected["reason_code"] == "capacity_exhausted"
+    assert fourth_rejected["reason_code"] == "capacity_exhausted"
+
+    svc.leases[first_lease_id].lease_expires_at = "invalid-datetime"
+    svc.leases[second_lease_id].lease_expires_at = "invalid-datetime"
+
+    recover_a = svc.allocate_placement(
+        run_id="run-concurrent-invalid-expiry-recover-5",
+        task_id="task-concurrent-invalid-expiry-recover-5",
+        capability="compute.comfyui.local",
+        trace_id="trace-concurrent-invalid-expiry-recover-5",
+    )
+    recover_b = svc.allocate_placement(
+        run_id="run-concurrent-invalid-expiry-recover-6",
+        task_id="task-concurrent-invalid-expiry-recover-6",
+        capability="compute.comfyui.local",
+        trace_id="trace-concurrent-invalid-expiry-recover-6",
+    )
+    assert recover_a["outcome"] == "lease_acquired"
+    assert recover_b["outcome"] == "lease_acquired"
+    assert recover_a["lease_id"] not in {first_lease_id, second_lease_id}
+    assert recover_b["lease_id"] not in {first_lease_id, second_lease_id}
+    assert recover_a["lease_id"] != recover_b["lease_id"]
+
+    for lease_id in (first_lease_id, second_lease_id):
+        assert svc.leases[lease_id].status == "expired"
+        assert svc.leases[lease_id].expire_reason_code == "ttl_expired"
+
+    snapshot = svc.placement_capacity_snapshot()
+    assert snapshot["active_leases"] == 2
+    assert snapshot["lease_status_counts"]["expired"] >= 2
