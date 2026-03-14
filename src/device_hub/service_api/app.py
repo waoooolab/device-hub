@@ -20,6 +20,7 @@ from .contracts import (
 from .placements import (
     allocate_placement_response,
     expire_placement_response,
+    preempt_placement_response,
     renew_placement_response,
     release_placement_response,
 )
@@ -316,6 +317,16 @@ def expire_placement(
     ),
 ) -> dict[str, Any]:
     return expire_placement_response(envelope=envelope, claims=claims, hub=_hub)
+
+
+@app.post("/v1/placements/preempt")
+def preempt_placement(
+    envelope: dict[str, Any],
+    claims: dict[str, Any] = Depends(
+        require_claims(audience=SERVICE_AUDIENCE, required_scope=DEVICES_WRITE_SCOPE)
+    ),
+) -> dict[str, Any]:
+    return preempt_placement_response(envelope=envelope, claims=claims, hub=_hub)
 
 
 @app.post("/v1/placements/renew")

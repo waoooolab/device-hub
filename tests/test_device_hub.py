@@ -151,6 +151,52 @@ def test_release_and_expire_lease_lifecycle():
     assert expired["reason_code"] == "ttl_expired"
 
 
+def test_preempt_lease_marks_active_lease_expired_with_preempt_reason() -> None:
+    svc = DeviceHubService()
+    svc.register_device("desktop-preempt", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-preempt")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-preempt")
+
+    allocated = svc.allocate_placement(
+        run_id="run-preempt-1",
+        task_id="task-preempt-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-preempt-1",
+    )
+    lease_id = allocated["lease_id"]
+
+    preempted = svc.preempt_lease(lease_id)
+    assert preempted["outcome"] == "lease_expired"
+    assert preempted["lease_id"] == lease_id
+    assert preempted["reason_code"] == "preempted_by_policy"
+    assert svc.leases[lease_id].status == "expired"
+    assert svc.leases[lease_id].expire_reason_code == "preempted_by_policy"
+
+
+def test_preempt_lease_rejects_empty_reason_code() -> None:
+    svc = DeviceHubService()
+    svc.register_device("desktop-preempt-invalid-reason", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-preempt-invalid-reason")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-preempt-invalid-reason")
+
+    allocated = svc.allocate_placement(
+        run_id="run-preempt-invalid-reason-1",
+        task_id="task-preempt-invalid-reason-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-preempt-invalid-reason-1",
+    )
+    lease_id = allocated["lease_id"]
+
+    try:
+        svc.preempt_lease(lease_id, reason_code="   ")
+    except ValueError as exc:
+        assert str(exc) == "reason_code must be non-empty string"
+    else:
+        raise AssertionError("preempt_lease should reject empty reason_code")
+
+
 def test_renew_lease_extends_expiry_for_active_lease() -> None:
     svc = DeviceHubService()
     svc.register_device("desktop-renew", ["compute.comfyui.local"])

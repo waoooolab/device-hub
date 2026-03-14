@@ -1849,6 +1849,143 @@ def test_expire_placement_emits_lease_expired_event() -> None:
     assert event["payload"]["decision"]["reason_code"] == "ttl_expired"
 
 
+def test_preempt_placement_emits_lease_expired_event_with_preempt_reason() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {"device_id": "gpu-node-preempt", "capabilities": ["compute.comfyui.local"]}
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-preempt"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-preempt"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    allocate = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-preempt-1",
+                "task_id": "task-preempt-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    lease_id = allocate.json()["payload"]["decision"]["lease_id"]
+
+    preempt = client.post(
+        "/v1/placements/preempt",
+        json=_command_envelope(
+            {"lease_id": lease_id, "reason_code": "preempted_by_policy"},
+            command_type="device.placement.preempt",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert preempt.status_code == 200
+    event = preempt.json()
+    assert event["event_type"] == "device.lease.expired"
+    assert event["payload"]["decision"]["outcome"] == "lease_expired"
+    assert event["payload"]["decision"]["lease_id"] == lease_id
+    assert event["payload"]["decision"]["reason_code"] == "preempted_by_policy"
+
+
+def test_preempt_placement_returns_409_for_released_lease() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {"device_id": "gpu-node-preempt-released", "capabilities": ["compute.comfyui.local"]}
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-preempt-released"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-preempt-released"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    allocate = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-preempt-released-1",
+                "task_id": "task-preempt-released-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    lease_id = allocate.json()["payload"]["decision"]["lease_id"]
+    release = client.post(
+        "/v1/placements/release",
+        json=_command_envelope(
+            {"lease_id": lease_id, "placement_request_id": f"lease:{lease_id}"},
+            command_type="device.placement.release",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert release.status_code == 200
+
+    preempt = client.post(
+        "/v1/placements/preempt",
+        json=_command_envelope(
+            {"lease_id": lease_id, "reason_code": "preempted_by_policy"},
+            command_type="device.placement.preempt",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert preempt.status_code == 409
+    assert "lease already released" in preempt.text
+
+
 def test_renew_placement_emits_lease_renewed_event() -> None:
     client = _setup_test_env()
     token = _token(["devices:write", "devices:read"])

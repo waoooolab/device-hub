@@ -877,6 +877,17 @@ class DeviceHubService:
             "reason_code": reason_code,
         }
 
+    def preempt_lease(
+        self,
+        lease_id: str,
+        *,
+        reason_code: str = "preempted_by_policy",
+    ) -> dict[str, Any]:
+        normalized_reason_code = reason_code.strip() if isinstance(reason_code, str) else ""
+        if not normalized_reason_code:
+            raise ValueError("reason_code must be non-empty string")
+        return self.expire_lease(lease_id, reason_code=normalized_reason_code)
+
     def renew_lease(self, lease_id: str, *, lease_ttl_seconds: int = 300) -> dict[str, Any]:
         self._expire_due_leases()
         if (
