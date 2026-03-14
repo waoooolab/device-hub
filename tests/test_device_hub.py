@@ -656,3 +656,58 @@ def test_release_lease_rejects_when_ttl_already_expired() -> None:
         assert str(exc) == "lease already expired"
     else:
         raise AssertionError("release_lease should reject ttl-expired lease")
+
+
+def test_capacity_snapshot_expires_active_lease_with_invalid_expiry_timestamp() -> None:
+    svc = DeviceHubService()
+    svc.register_device("desktop-invalid-expiry", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-invalid-expiry")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-invalid-expiry")
+
+    allocated = svc.allocate_placement(
+        run_id="run-invalid-expiry",
+        task_id="task-invalid-expiry",
+        capability="compute.comfyui.local",
+        trace_id="trace-invalid-expiry",
+    )
+    lease_id = allocated["lease_id"]
+    lease = svc.leases[lease_id]
+    lease.lease_expires_at = "invalid-datetime"
+
+    snapshot = svc.placement_capacity_snapshot()
+
+    assert snapshot["active_leases"] == 0
+    assert snapshot["lease_status_counts"]["active"] == 0
+    assert snapshot["lease_status_counts"]["expired"] >= 1
+    assert svc.leases[lease_id].status == "expired"
+    assert svc.leases[lease_id].expire_reason_code == "ttl_expired"
+
+
+def test_allocate_placement_recovers_capacity_when_existing_lease_expiry_is_invalid() -> None:
+    svc = DeviceHubService()
+    svc.register_device("desktop-invalid-expiry-recover", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-invalid-expiry-recover")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-invalid-expiry-recover")
+
+    first = svc.allocate_placement(
+        run_id="run-invalid-expiry-recover-1",
+        task_id="task-invalid-expiry-recover-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-invalid-expiry-recover-1",
+    )
+    assert first["outcome"] == "lease_acquired"
+    first_lease_id = first["lease_id"]
+    svc.leases[first_lease_id].lease_expires_at = "invalid-datetime"
+
+    second = svc.allocate_placement(
+        run_id="run-invalid-expiry-recover-2",
+        task_id="task-invalid-expiry-recover-2",
+        capability="compute.comfyui.local",
+        trace_id="trace-invalid-expiry-recover-2",
+    )
+
+    assert second["outcome"] == "lease_acquired"
+    assert second["lease_id"] != first_lease_id
+    assert svc.leases[first_lease_id].status == "expired"

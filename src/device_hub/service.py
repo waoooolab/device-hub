@@ -449,7 +449,16 @@ class DeviceHubService:
             if lease.status != "active":
                 continue
             expires_at = self._parse_iso_datetime(lease.lease_expires_at)
-            if expires_at is None or expires_at > now:
+            if expires_at is None:
+                # Defensive recovery: malformed expiry should never pin capacity.
+                lease.status = "expired"
+                lease.expired_at = now_iso
+                lease.expire_reason_code = "ttl_expired"
+                if lease.device_id in self.registry.devices:
+                    self.registry.heartbeat(lease.device_id)
+                expired_count += 1
+                continue
+            if expires_at > now:
                 continue
             lease.status = "expired"
             lease.expired_at = now_iso
