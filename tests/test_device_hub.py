@@ -110,6 +110,36 @@ def test_allocate_placement_returns_rejected_when_no_candidate():
     assert decision["reason_code"] == "no_eligible_device"
 
 
+def test_allocate_placement_returns_route_unavailable_when_selector_returns_none(monkeypatch) -> None:
+    svc = DeviceHubService()
+    svc.register_device("desktop-route-none", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-route-none")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-route-none")
+
+    monkeypatch.setattr(
+        "device_hub.service.choose_device",
+        lambda _candidate_ids, load_by_device=None: None,
+    )
+
+    decision = svc.allocate_placement(
+        run_id="run-route-none",
+        task_id="task-route-none",
+        capability="compute.comfyui.local",
+        trace_id="trace-route-none",
+        tenant_id="t1",
+    )
+    assert decision["outcome"] == "rejected"
+    assert decision["reason_code"] == "route_unavailable"
+    assert "unable to select device" in decision["reason"]
+    snapshot = decision["resource_snapshot"]
+    assert snapshot["eligible_devices"] == 1
+    assert snapshot["active_leases"] == 0
+    assert snapshot["available_slots"] == 1
+    assert snapshot["tenant_id"] == "t1"
+    assert snapshot["tenant_active_leases"] == 0
+
+
 def test_capacity_snapshot_zero_utilization_without_eligible_devices() -> None:
     svc = DeviceHubService()
     snapshot = svc.placement_capacity_snapshot()

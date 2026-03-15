@@ -893,7 +893,17 @@ class DeviceHubService:
             )
         device_id = choose_device(available_ids, load_by_device=load_by_device)
         if not device_id:
-            return self._rejected_placement(run_id, task_id, capability)
+            return self._rejected_placement(
+                run_id,
+                task_id,
+                capability,
+                reason_code="route_unavailable",
+                reason="unable to select device from eligible route set",
+                resource_snapshot=self._build_rejection_resource_snapshot(
+                    candidate_ids=constrained_ids,
+                    tenant_id=normalized_tenant_id,
+                ),
+            )
         queue_depth = 0
         if load_by_device and device_id in load_by_device:
             queue_depth = max(0, int(load_by_device.get(device_id, 0)))
