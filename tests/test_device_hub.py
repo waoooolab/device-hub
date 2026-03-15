@@ -439,6 +439,59 @@ def test_allocate_placement_rejects_when_tenant_quota_is_exhausted() -> None:
     assert snapshot["tenant_quota"]["tenants_at_limit"] >= 1
 
 
+def test_allocate_placement_tenant_quota_recovers_after_release() -> None:
+    svc = DeviceHubService(max_active_leases_per_tenant=1)
+    svc.register_device("desktop-quota-recover-a", ["compute.comfyui.local"])
+    svc.register_device("desktop-quota-recover-b", ["compute.comfyui.local"])
+    req_a = svc.request_pairing("desktop-quota-recover-a")
+    req_b = svc.request_pairing("desktop-quota-recover-b")
+    svc.approve_pairing(req_a.code)
+    svc.approve_pairing(req_b.code)
+    svc.receive_heartbeat("desktop-quota-recover-a")
+    svc.receive_heartbeat("desktop-quota-recover-b")
+
+    first = svc.allocate_placement(
+        run_id="run-quota-recover-1",
+        task_id="task-quota-recover-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-quota-recover-1",
+        tenant_id="t1",
+    )
+    assert first["outcome"] == "lease_acquired"
+
+    second = svc.allocate_placement(
+        run_id="run-quota-recover-2",
+        task_id="task-quota-recover-2",
+        capability="compute.comfyui.local",
+        trace_id="trace-quota-recover-2",
+        tenant_id="t1",
+    )
+    assert second["outcome"] == "rejected"
+    assert second["reason_code"] == "tenant_quota_exhausted"
+    assert second["resource_snapshot"]["tenant_active_leases"] == 1
+    assert second["resource_snapshot"]["available_slots"] == 1
+
+    lease_id = first["lease_id"]
+    released = svc.release_lease(lease_id)
+    assert released["outcome"] == "lease_released"
+
+    snapshot_after_release = svc.placement_capacity_snapshot()
+    assert snapshot_after_release["active_leases"] == 0
+    assert snapshot_after_release["available_slots"] == 2
+    assert snapshot_after_release["tenant_quota"]["tenants_at_limit"] == 0
+
+    third = svc.allocate_placement(
+        run_id="run-quota-recover-3",
+        task_id="task-quota-recover-3",
+        capability="compute.comfyui.local",
+        trace_id="trace-quota-recover-3",
+        tenant_id="t1",
+    )
+    assert third["outcome"] == "lease_acquired"
+    assert third["resource_snapshot"]["tenant_active_leases"] == 0
+    assert third["resource_snapshot"]["tenant_limit"] == 1
+
+
 def test_allocate_placement_honors_tenant_quota_overrides_before_default() -> None:
     svc = DeviceHubService(
         max_active_leases_per_tenant=3,

@@ -946,6 +946,133 @@ def test_allocate_placement_returns_route_rejected_event_when_tenant_quota_exhau
     assert snapshot["available_slots"] == 1
 
 
+def test_allocate_placement_tenant_quota_recovers_after_release() -> None:
+    client = _setup_test_env()
+    app_module._hub = DeviceHubService(max_active_leases_per_tenant=1)
+    token = _token(["devices:write", "devices:read"])
+
+    for device_id in ("gpu-node-quota-recover-a", "gpu-node-quota-recover-b"):
+        client.post(
+            "/v1/devices/register",
+            json=_command_envelope(
+                {
+                    "device_id": device_id,
+                    "capabilities": ["compute.comfyui.local"],
+                }
+            ),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        pair_req = client.post(
+            "/v1/devices/pairing/request",
+            json=_command_envelope({"device_id": device_id}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        code = pair_req.json()["payload"]["code"]
+        client.post(
+            "/v1/devices/pairing/approve",
+            json=_command_envelope({"code": code}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        client.post(
+            "/v1/devices/heartbeat",
+            json=_command_envelope({"device_id": device_id}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    first = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-quota-recover-api-1",
+                "task_id": "task-quota-recover-api-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert first.status_code == 200
+    assert first.json()["event_type"] == "device.lease.acquired"
+    lease_id = first.json()["payload"]["decision"]["lease_id"]
+
+    second = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-quota-recover-api-2",
+                "task_id": "task-quota-recover-api-2",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert second.status_code == 200
+    assert second.json()["event_type"] == "device.route.rejected"
+    assert second.json()["payload"]["decision"]["reason_code"] == "tenant_quota_exhausted"
+
+    release = client.post(
+        "/v1/placements/release",
+        json=_command_envelope(
+            {"lease_id": lease_id, "placement_request_id": f"lease:{lease_id}"},
+            command_type="device.placement.release",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert release.status_code == 200
+    assert release.json()["event_type"] == "device.lease.released"
+
+    capacity = client.get(
+        "/v1/placements/capacity",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert capacity.status_code == 200
+    capacity_payload = capacity.json()
+    assert capacity_payload["active_leases"] == 0
+    assert capacity_payload["available_slots"] == 2
+    assert capacity_payload["tenant_quota"]["tenants_at_limit"] == 0
+
+    third = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-quota-recover-api-3",
+                "task_id": "task-quota-recover-api-3",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert third.status_code == 200
+    assert third.json()["event_type"] == "device.lease.acquired"
+    assert third.json()["payload"]["decision"]["resource_snapshot"]["tenant_active_leases"] == 0
+
+
 def test_allocate_placement_tenant_quota_can_use_envelope_tenant_fallback() -> None:
     client = _setup_test_env()
     app_module._hub = DeviceHubService(max_active_leases_per_tenant=1)
