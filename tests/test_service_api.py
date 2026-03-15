@@ -586,6 +586,12 @@ def test_allocate_placement_returns_route_rejected_event_when_no_device() -> Non
     assert event["payload"]["decision"]["outcome"] == "rejected"
     assert event["payload"]["decision"]["reason_code"] == "no_eligible_device"
     assert "no eligible device" in event["payload"]["decision"]["reason"]
+    snapshot = event["payload"]["decision"]["resource_snapshot"]
+    assert snapshot["eligible_devices"] == 0
+    assert snapshot["active_leases"] == 0
+    assert snapshot["available_slots"] == 0
+    assert snapshot["tenant_id"] == "t1"
+    assert snapshot["tenant_active_leases"] == 0
 
 
 def test_allocate_placement_returns_route_rejected_event_when_capacity_exhausted() -> None:
@@ -1007,6 +1013,12 @@ def test_allocate_placement_returns_required_capabilities_unavailable_reason() -
     assert event["event_type"] == "device.route.rejected"
     assert event["payload"]["decision"]["reason_code"] == "required_capabilities_unavailable"
     assert "required_capabilities" in event["payload"]["decision"]["reason"]
+    snapshot = event["payload"]["decision"]["resource_snapshot"]
+    assert snapshot["eligible_devices"] == 1
+    assert snapshot["active_leases"] == 0
+    assert snapshot["available_slots"] == 1
+    assert snapshot["tenant_id"] == "t1"
+    assert snapshot["tenant_active_leases"] == 0
 
 
 def test_allocate_placement_returns_node_pool_fallback_when_requested_pool_missing() -> None:
@@ -1128,6 +1140,12 @@ def test_allocate_placement_returns_avoid_capabilities_excluded_reason() -> None
     assert event["event_type"] == "device.route.rejected"
     assert event["payload"]["decision"]["reason_code"] == "avoid_capabilities_excluded"
     assert "avoid_capabilities" in event["payload"]["decision"]["reason"]
+    snapshot = event["payload"]["decision"]["resource_snapshot"]
+    assert snapshot["eligible_devices"] == 1
+    assert snapshot["active_leases"] == 0
+    assert snapshot["available_slots"] == 1
+    assert snapshot["tenant_id"] == "t1"
+    assert snapshot["tenant_active_leases"] == 0
 
 
 def test_allocate_placement_rejects_invalid_execution_profile() -> None:

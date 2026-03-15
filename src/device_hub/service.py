@@ -63,9 +63,10 @@ class DeviceHubService:
         *,
         reason_code: str = "no_eligible_device",
         reason: str | None = None,
+        resource_snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         message = reason or f"no eligible device for capability '{capability}'"
-        return {
+        decision: dict[str, Any] = {
             "run_id": run_id,
             "task_id": task_id,
             "outcome": "rejected",
@@ -73,6 +74,9 @@ class DeviceHubService:
             "reason": message,
             "capability_match": [capability],
         }
+        if isinstance(resource_snapshot, dict) and resource_snapshot:
+            decision["resource_snapshot"] = dict(resource_snapshot)
+        return decision
 
     @staticmethod
     def _rejected_capacity(
@@ -443,6 +447,30 @@ class DeviceHubService:
             return self.tenant_active_lease_limits[normalized]
         return self.max_active_leases_per_tenant
 
+    def _build_rejection_resource_snapshot(
+        self,
+        *,
+        candidate_ids: list[str],
+        tenant_id: str | None,
+    ) -> dict[str, Any]:
+        normalized_tenant_id = tenant_id.strip() if isinstance(tenant_id, str) else ""
+        active_lease_device_ids = self._active_lease_device_ids()
+        active_candidate_leases = sum(1 for device_id in candidate_ids if device_id in active_lease_device_ids)
+        tenant_active_leases = 0
+        tenant_limit = None
+        if normalized_tenant_id:
+            tenant_active_leases = self._active_lease_count_for_tenant(normalized_tenant_id)
+            tenant_limit = self._resolve_tenant_active_lease_limit(normalized_tenant_id)
+        return _build_allocation_resource_snapshot(
+            queue_depth=0,
+            eligible_devices=len(candidate_ids),
+            active_leases=active_candidate_leases,
+            available_slots=max(len(candidate_ids) - active_candidate_leases, 0),
+            tenant_id=normalized_tenant_id or None,
+            tenant_active_leases=tenant_active_leases,
+            tenant_limit=tenant_limit,
+        )
+
     def _expire_due_leases(self) -> int:
         now = datetime.now(timezone.utc)
         now_iso = now.isoformat()
@@ -650,9 +678,18 @@ class DeviceHubService:
     ) -> dict[str, Any]:
         """Select a device and mint a short-lived lease descriptor."""
         self._expire_due_leases()
+        normalized_tenant_id = tenant_id.strip() if isinstance(tenant_id, str) else ""
         eligible_ids = self._eligible_devices_for_capability(capability)
         if not eligible_ids:
-            return self._rejected_placement(run_id, task_id, capability)
+            return self._rejected_placement(
+                run_id,
+                task_id,
+                capability,
+                resource_snapshot=self._build_rejection_resource_snapshot(
+                    candidate_ids=[],
+                    tenant_id=normalized_tenant_id,
+                ),
+            )
 
         fallback_reason_code: str | None = None
         fallback_reason: str | None = None
@@ -668,6 +705,10 @@ class DeviceHubService:
                     capability,
                     reason_code="region_unavailable",
                     reason="no eligible device matches placement_constraints.region",
+                    resource_snapshot=self._build_rejection_resource_snapshot(
+                        candidate_ids=eligible_ids,
+                        tenant_id=normalized_tenant_id,
+                    ),
                 )
             if constraint_reason_code == "node_pool_unavailable":
                 fallback_ids, _ = self._filter_candidates_by_constraints(
@@ -690,6 +731,10 @@ class DeviceHubService:
                         capability,
                         reason_code="node_pool_unavailable",
                         reason="no eligible device matches placement_constraints.node_pool",
+                        resource_snapshot=self._build_rejection_resource_snapshot(
+                            candidate_ids=eligible_ids,
+                            tenant_id=normalized_tenant_id,
+                        ),
                     )
             if constraint_reason_code == "cost_tier_unavailable":
                 return self._rejected_placement(
@@ -698,6 +743,10 @@ class DeviceHubService:
                     capability,
                     reason_code="cost_tier_unavailable",
                     reason="no eligible device matches placement_constraints.cost_tier",
+                    resource_snapshot=self._build_rejection_resource_snapshot(
+                        candidate_ids=eligible_ids,
+                        tenant_id=normalized_tenant_id,
+                    ),
                 )
             if constraint_reason_code == "cost_limit_exceeded":
                 return self._rejected_placement(
@@ -706,6 +755,10 @@ class DeviceHubService:
                     capability,
                     reason_code="cost_limit_exceeded",
                     reason="no eligible device satisfies placement_constraints.max_cost_usd_hard",
+                    resource_snapshot=self._build_rejection_resource_snapshot(
+                        candidate_ids=eligible_ids,
+                        tenant_id=normalized_tenant_id,
+                    ),
                 )
             if constraint_reason_code == "required_capabilities_unavailable":
                 return self._rejected_placement(
@@ -714,6 +767,10 @@ class DeviceHubService:
                     capability,
                     reason_code="required_capabilities_unavailable",
                     reason="no eligible device satisfies placement_constraints.required_capabilities",
+                    resource_snapshot=self._build_rejection_resource_snapshot(
+                        candidate_ids=eligible_ids,
+                        tenant_id=normalized_tenant_id,
+                    ),
                 )
             if constraint_reason_code == "avoid_capabilities_excluded":
                 return self._rejected_placement(
@@ -722,9 +779,21 @@ class DeviceHubService:
                     capability,
                     reason_code="avoid_capabilities_excluded",
                     reason="all eligible devices are excluded by placement_constraints.avoid_capabilities",
+                    resource_snapshot=self._build_rejection_resource_snapshot(
+                        candidate_ids=eligible_ids,
+                        tenant_id=normalized_tenant_id,
+                    ),
                 )
             if not constrained_ids:
-                return self._rejected_placement(run_id, task_id, capability)
+                return self._rejected_placement(
+                    run_id,
+                    task_id,
+                    capability,
+                    resource_snapshot=self._build_rejection_resource_snapshot(
+                        candidate_ids=eligible_ids,
+                        tenant_id=normalized_tenant_id,
+                    ),
+                )
 
         constrained_pool_ids = list(constrained_ids)
         constrained_ids, locality_reason_code, locality_reason = self._apply_locality_preference(
@@ -737,7 +806,6 @@ class DeviceHubService:
         if not constrained_ids:
             return self._rejected_placement(run_id, task_id, capability)
 
-        normalized_tenant_id = tenant_id.strip() if isinstance(tenant_id, str) else ""
         tenant_limit = self._resolve_tenant_active_lease_limit(normalized_tenant_id)
         tenant_active_leases = 0
         if normalized_tenant_id:

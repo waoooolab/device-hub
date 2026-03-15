@@ -572,6 +572,9 @@ def test_allocate_placement_rejects_when_region_or_cost_constraints_fail() -> No
     )
     assert region_miss["outcome"] == "rejected"
     assert region_miss["reason_code"] == "region_unavailable"
+    assert region_miss["resource_snapshot"]["eligible_devices"] == 1
+    assert region_miss["resource_snapshot"]["active_leases"] == 0
+    assert region_miss["resource_snapshot"]["available_slots"] == 1
 
     cost_miss = svc.allocate_placement(
         run_id="run-cost-miss",
@@ -582,6 +585,9 @@ def test_allocate_placement_rejects_when_region_or_cost_constraints_fail() -> No
     )
     assert cost_miss["outcome"] == "rejected"
     assert cost_miss["reason_code"] == "cost_limit_exceeded"
+    assert cost_miss["resource_snapshot"]["eligible_devices"] == 1
+    assert cost_miss["resource_snapshot"]["active_leases"] == 0
+    assert cost_miss["resource_snapshot"]["available_slots"] == 1
 
 
 def test_allocate_placement_fallbacks_to_alternate_node_pool_when_requested_pool_missing() -> None:
@@ -638,6 +644,8 @@ def test_allocate_placement_rejects_when_required_capabilities_not_fully_satisfi
     )
     assert rejected["outcome"] == "rejected"
     assert rejected["reason_code"] == "required_capabilities_unavailable"
+    assert rejected["resource_snapshot"]["eligible_devices"] == 1
+    assert rejected["resource_snapshot"]["available_slots"] == 1
 
 
 def test_allocate_placement_respects_avoid_capabilities_filter() -> None:
@@ -682,6 +690,9 @@ def test_allocate_placement_respects_avoid_capabilities_filter() -> None:
     )
     assert rejected["outcome"] == "rejected"
     assert rejected["reason_code"] == "avoid_capabilities_excluded"
+    assert rejected["resource_snapshot"]["eligible_devices"] == 2
+    assert rejected["resource_snapshot"]["active_leases"] == 1
+    assert rejected["resource_snapshot"]["available_slots"] == 1
 
 
 def test_capacity_snapshot_expires_stale_active_lease() -> None:
