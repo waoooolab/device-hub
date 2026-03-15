@@ -612,6 +612,40 @@ def test_allocate_placement_replay_index_self_heals_stale_entry() -> None:
     assert svc.active_lease_index_by_run_task.get(replay_key) == first_lease_id
 
 
+def test_terminal_lease_actions_prune_stale_replay_index_entry() -> None:
+    terminal_actions = ("release", "expire")
+    for action in terminal_actions:
+        svc = DeviceHubService(max_active_leases_per_tenant=1)
+        device_id = f"desktop-replay-prune-{action}"
+        run_id = f"run-replay-prune-{action}"
+        task_id = f"task-replay-prune-{action}"
+        svc.register_device(device_id, ["compute.comfyui.local"])
+        req = svc.request_pairing(device_id)
+        svc.approve_pairing(req.code)
+        svc.receive_heartbeat(device_id)
+
+        first = svc.allocate_placement(
+            run_id=run_id,
+            task_id=task_id,
+            capability="compute.comfyui.local",
+            trace_id=f"trace-replay-prune-{action}",
+            tenant_id="t1",
+        )
+        first_lease_id = first["lease_id"]
+        replay_key = (run_id, task_id)
+        assert svc.active_lease_index_by_run_task.get(replay_key) == first_lease_id
+        svc.active_lease_index_by_run_task[replay_key] = "lease-missing"
+
+        if action == "release":
+            released = svc.release_lease(first_lease_id)
+            assert released["outcome"] == "lease_released"
+        else:
+            expired = svc.expire_lease(first_lease_id, reason_code="ttl_expired")
+            assert expired["outcome"] == "lease_expired"
+
+        assert replay_key not in svc.active_lease_index_by_run_task
+
+
 def test_allocate_placement_rejects_when_tenant_quota_is_exhausted() -> None:
     svc = DeviceHubService(max_active_leases_per_tenant=1)
     svc.register_device("desktop-quota-a", ["compute.comfyui.local"])

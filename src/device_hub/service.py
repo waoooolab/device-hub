@@ -445,7 +445,18 @@ class DeviceHubService:
     def _unindex_active_lease(self, lease: LeaseRecord) -> None:
         key = self._run_task_index_key(run_id=lease.run_id, task_id=lease.task_id)
         current_lease_id = self.active_lease_index_by_run_task.get(key)
+        if not isinstance(current_lease_id, str):
+            return
         if current_lease_id == lease.lease_id:
+            self.active_lease_index_by_run_task.pop(key, None)
+            return
+        current_lease = self.leases.get(current_lease_id)
+        if (
+            current_lease is None
+            or current_lease.status != "active"
+            or current_lease.run_id != lease.run_id
+            or current_lease.task_id != lease.task_id
+        ):
             self.active_lease_index_by_run_task.pop(key, None)
 
     def _find_active_lease_for_run_task(self, *, run_id: str, task_id: str) -> LeaseRecord | None:
