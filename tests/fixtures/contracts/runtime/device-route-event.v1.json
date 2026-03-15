@@ -168,6 +168,71 @@
                 }
               },
               "additionalProperties": false
+            },
+            "placement_audit": {
+              "type": "object",
+              "properties": {
+                "candidate_device_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "candidate_execution_sites": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "local",
+                      "cloud"
+                    ]
+                  },
+                  "uniqueItems": true
+                },
+                "selected_device_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "selected_execution_site": {
+                  "type": "string",
+                  "enum": [
+                    "local",
+                    "cloud"
+                  ]
+                },
+                "selected_region": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "selected_node_pool": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "fallback_applied": {
+                  "type": "boolean"
+                },
+                "fallback_reason_code": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^[a-z0-9_]+$"
+                },
+                "failure_domain": {
+                  "type": "string",
+                  "enum": [
+                    "execution_site",
+                    "node_pool",
+                    "region",
+                    "cost_tier",
+                    "cost_limit",
+                    "capability",
+                    "capacity",
+                    "tenant_quota",
+                    "route_selector",
+                    "tenant_context",
+                    "capability_context",
+                    "replay"
+                  ]
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

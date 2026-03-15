@@ -341,6 +341,11 @@ def test_route_command_selects_low_load_device() -> None:
     snapshot = decision["resource_snapshot"]
     assert snapshot["queue_depth"] == 1
     assert snapshot["eligible_devices"] == 2
+    audit = decision["placement_audit"]
+    assert audit["candidate_device_count"] == 2
+    assert audit["selected_device_id"] == "desktop-b"
+    assert audit["selected_execution_site"] == "local"
+    assert audit["fallback_applied"] is False
 
 
 def test_route_command_returns_route_rejected_with_structured_decision() -> None:
@@ -370,6 +375,10 @@ def test_route_command_returns_route_rejected_with_structured_decision() -> None
     snapshot = decision["resource_snapshot"]
     assert snapshot["eligible_devices"] == 0
     assert snapshot["available_slots"] == 0
+    audit = decision["placement_audit"]
+    assert audit["candidate_device_count"] == 0
+    assert audit["fallback_applied"] is False
+    assert audit["failure_domain"] == "capability"
 
 
 def test_allocate_placement_returns_lease_acquired_event() -> None:
@@ -520,6 +529,11 @@ def test_allocate_placement_prefers_local_then_fallbacks_to_cloud_with_trace_fie
     assert first_decision["device_id"] == "gpu-local-pref"
     assert "score" in first_decision
     assert first_decision["resource_snapshot"]["queue_depth"] == 2
+    first_audit = first_decision["placement_audit"]
+    assert first_audit["candidate_device_count"] == 1
+    assert first_audit["selected_device_id"] == "gpu-local-pref"
+    assert first_audit["selected_execution_site"] == "local"
+    assert first_audit["fallback_applied"] is False
 
     second = client.post(
         "/v1/placements/allocate",
@@ -552,6 +566,13 @@ def test_allocate_placement_prefers_local_then_fallbacks_to_cloud_with_trace_fie
     assert "fallback" in second_decision["reason"]
     assert "score" in second_decision
     assert second_decision["resource_snapshot"]["queue_depth"] == 1
+    second_audit = second_decision["placement_audit"]
+    assert second_audit["candidate_device_count"] == 1
+    assert second_audit["selected_device_id"] == "gpu-cloud-pref"
+    assert second_audit["selected_execution_site"] == "cloud"
+    assert second_audit["fallback_applied"] is True
+    assert second_audit["fallback_reason_code"] == "local_preference_fallback"
+    assert second_audit["failure_domain"] == "execution_site"
 
 
 def test_allocate_placement_returns_route_rejected_event_when_no_device() -> None:
@@ -1702,6 +1723,14 @@ def test_allocate_placement_returns_node_pool_fallback_when_requested_pool_missi
     assert event["event_type"] == "device.lease.acquired"
     assert event["payload"]["decision"]["reason_code"] == "node_pool_fallback"
     assert "alternate node_pool" in event["payload"]["decision"]["reason"]
+    audit = event["payload"]["decision"]["placement_audit"]
+    assert audit["candidate_device_count"] == 1
+    assert audit["selected_device_id"] == "gpu-node-pool-fallback-api"
+    assert audit["selected_execution_site"] == "local"
+    assert audit["selected_node_pool"] == "pool-b"
+    assert audit["fallback_applied"] is True
+    assert audit["fallback_reason_code"] == "node_pool_fallback"
+    assert audit["failure_domain"] == "node_pool"
 
 
 def test_allocate_placement_returns_avoid_capabilities_excluded_reason() -> None:

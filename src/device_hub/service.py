@@ -65,6 +65,7 @@ class DeviceHubService:
         reason_code: str = "no_eligible_device",
         reason: str | None = None,
         resource_snapshot: dict[str, Any] | None = None,
+        placement_audit: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         message = reason or f"no eligible device for capability '{capability}'"
         decision: dict[str, Any] = {
@@ -77,6 +78,8 @@ class DeviceHubService:
         }
         if isinstance(resource_snapshot, dict) and resource_snapshot:
             decision["resource_snapshot"] = dict(resource_snapshot)
+        if isinstance(placement_audit, dict) and placement_audit:
+            decision["placement_audit"] = dict(placement_audit)
         return decision
 
     @staticmethod
@@ -91,8 +94,9 @@ class DeviceHubService:
         tenant_id: str | None = None,
         tenant_active_leases: int = 0,
         tenant_limit: int | None = None,
+        placement_audit: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return {
+        decision: dict[str, Any] = {
             "run_id": run_id,
             "task_id": task_id,
             "outcome": "rejected",
@@ -109,6 +113,9 @@ class DeviceHubService:
                 tenant_limit=tenant_limit,
             ),
         }
+        if isinstance(placement_audit, dict) and placement_audit:
+            decision["placement_audit"] = dict(placement_audit)
+        return decision
 
     @staticmethod
     def _rejected_tenant_quota(
@@ -122,8 +129,9 @@ class DeviceHubService:
         eligible_devices: int,
         active_leases: int,
         available_slots: int,
+        placement_audit: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return {
+        decision: dict[str, Any] = {
             "run_id": run_id,
             "task_id": task_id,
             "outcome": "rejected",
@@ -140,6 +148,9 @@ class DeviceHubService:
                 tenant_limit=tenant_limit,
             ),
         }
+        if isinstance(placement_audit, dict) and placement_audit:
+            decision["placement_audit"] = dict(placement_audit)
+        return decision
 
     @staticmethod
     def _lease_expiry(lease_ttl_seconds: int) -> str:
@@ -170,6 +181,7 @@ class DeviceHubService:
         resource_snapshot: dict[str, Any] | None = None,
         route_reason_code: str | None = None,
         route_reason: str | None = None,
+        placement_audit: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self.registry.mark_busy(device_id)
         lease_id = f"lease-{uuid4()}"
@@ -199,6 +211,8 @@ class DeviceHubService:
             decision["score"] = score
         if isinstance(resource_snapshot, dict) and resource_snapshot:
             decision["resource_snapshot"] = dict(resource_snapshot)
+        if isinstance(placement_audit, dict) and placement_audit:
+            decision["placement_audit"] = dict(placement_audit)
         normalized_route_reason_code = normalize_optional_code_term(route_reason_code)
         if normalized_route_reason_code:
             decision["reason_code"] = normalized_route_reason_code
@@ -429,6 +443,67 @@ class DeviceHubService:
         locality_component = 1.0 if rec and rec.execution_site == "local" and not had_fallback else 0.7
         return round(max(0.0, min(1.0, load_component * locality_component)), 6)
 
+    @staticmethod
+    def _resolve_failure_domain(reason_code: str | None) -> str | None:
+        normalized_reason_code = normalize_optional_code_term(reason_code)
+        if normalized_reason_code is None:
+            return None
+        reason_domain_map = {
+            "local_preference_fallback": "execution_site",
+            "node_pool_fallback": "node_pool",
+            "region_unavailable": "region",
+            "node_pool_unavailable": "node_pool",
+            "cost_tier_unavailable": "cost_tier",
+            "cost_limit_exceeded": "cost_limit",
+            "required_capabilities_unavailable": "capability",
+            "avoid_capabilities_excluded": "capability",
+            "no_eligible_device": "capability",
+            "capacity_exhausted": "capacity",
+            "tenant_quota_exhausted": "tenant_quota",
+            "route_unavailable": "route_selector",
+            "tenant_context_conflict": "tenant_context",
+            "capability_context_conflict": "capability_context",
+            "idempotent_replay": "replay",
+        }
+        return reason_domain_map.get(normalized_reason_code)
+
+    def _build_placement_audit(
+        self,
+        *,
+        candidate_ids: list[str],
+        selected_device_id: str | None = None,
+        reason_code: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_reason_code = normalize_optional_code_term(reason_code)
+        candidate_execution_sites: set[str] = set()
+        for device_id in candidate_ids:
+            rec = self.registry.devices.get(device_id)
+            if rec is None:
+                continue
+            if rec.execution_site in {"local", "cloud"}:
+                candidate_execution_sites.add(rec.execution_site)
+        audit: dict[str, Any] = {
+            "candidate_device_count": max(0, len(candidate_ids)),
+            "fallback_applied": normalized_reason_code in {"local_preference_fallback", "node_pool_fallback"},
+        }
+        if candidate_execution_sites:
+            audit["candidate_execution_sites"] = sorted(candidate_execution_sites)
+        if selected_device_id is not None:
+            selected = self.registry.devices.get(selected_device_id)
+            if selected is not None:
+                audit["selected_device_id"] = selected.device_id
+                audit["selected_execution_site"] = selected.execution_site
+                if isinstance(selected.region, str) and selected.region:
+                    audit["selected_region"] = selected.region
+                if isinstance(selected.node_pool, str) and selected.node_pool:
+                    audit["selected_node_pool"] = selected.node_pool
+        if audit["fallback_applied"] and normalized_reason_code is not None:
+            audit["fallback_reason_code"] = normalized_reason_code
+        failure_domain = self._resolve_failure_domain(normalized_reason_code)
+        if failure_domain is not None:
+            audit["failure_domain"] = failure_domain
+        return audit
+
     def _active_lease_device_ids(self) -> set[str]:
         return {lease.device_id for lease in self.leases.values() if lease.status == "active"}
 
@@ -632,6 +707,10 @@ class DeviceHubService:
                     "available_slots": 0,
                     "queue_depth": 0,
                 },
+                "placement_audit": self._build_placement_audit(
+                    candidate_ids=[],
+                    reason_code="no_eligible_device",
+                ),
             }
 
         active_lease_devices = self._active_lease_device_ids()
@@ -650,6 +729,10 @@ class DeviceHubService:
                     "available_slots": len(available_ids),
                     "queue_depth": 0,
                 },
+                "placement_audit": self._build_placement_audit(
+                    candidate_ids=candidate_ids,
+                    reason_code="route_unavailable",
+                ),
             }
         queue_depth = 0
         if load_by_device and device_id in load_by_device:
@@ -670,6 +753,10 @@ class DeviceHubService:
                 "available_slots": len(available_ids),
                 "queue_depth": queue_depth,
             },
+            "placement_audit": self._build_placement_audit(
+                candidate_ids=candidate_ids,
+                selected_device_id=device_id,
+            ),
         }
 
     def placement_capacity_snapshot(self) -> dict[str, Any]:
@@ -783,6 +870,11 @@ class DeviceHubService:
                         "active lease capability mismatch for identical run/task allocation request"
                     ),
                     resource_snapshot=replay_resource_snapshot,
+                    placement_audit=self._build_placement_audit(
+                        candidate_ids=snapshot_candidate_ids,
+                        selected_device_id=existing_active_lease.device_id,
+                        reason_code="capability_context_conflict",
+                    ),
                 )
             existing_tenant_id = (
                 existing_active_lease.tenant_id.strip()
@@ -799,6 +891,11 @@ class DeviceHubService:
                         "active lease tenant context mismatch for identical run/task allocation request"
                     ),
                     resource_snapshot=replay_resource_snapshot,
+                    placement_audit=self._build_placement_audit(
+                        candidate_ids=snapshot_candidate_ids,
+                        selected_device_id=existing_active_lease.device_id,
+                        reason_code="tenant_context_conflict",
+                    ),
                 )
             replay_decision: dict[str, Any] = {
                 "run_id": run_id,
@@ -812,6 +909,11 @@ class DeviceHubService:
                 "resource_snapshot": replay_resource_snapshot,
                 "reason_code": "idempotent_replay",
                 "reason": "active lease reused for identical run/task allocation request",
+                "placement_audit": self._build_placement_audit(
+                    candidate_ids=snapshot_candidate_ids,
+                    selected_device_id=existing_active_lease.device_id,
+                    reason_code="idempotent_replay",
+                ),
             }
             return replay_decision
 
@@ -824,6 +926,10 @@ class DeviceHubService:
                 resource_snapshot=self._build_rejection_resource_snapshot(
                     candidate_ids=[],
                     tenant_id=normalized_tenant_id,
+                ),
+                placement_audit=self._build_placement_audit(
+                    candidate_ids=[],
+                    reason_code="no_eligible_device",
                 ),
             )
 
@@ -844,6 +950,10 @@ class DeviceHubService:
                     resource_snapshot=self._build_rejection_resource_snapshot(
                         candidate_ids=eligible_ids,
                         tenant_id=normalized_tenant_id,
+                    ),
+                    placement_audit=self._build_placement_audit(
+                        candidate_ids=eligible_ids,
+                        reason_code="region_unavailable",
                     ),
                 )
             if constraint_reason_code == "node_pool_unavailable":
@@ -871,6 +981,10 @@ class DeviceHubService:
                             candidate_ids=eligible_ids,
                             tenant_id=normalized_tenant_id,
                         ),
+                        placement_audit=self._build_placement_audit(
+                            candidate_ids=eligible_ids,
+                            reason_code="node_pool_unavailable",
+                        ),
                     )
             if constraint_reason_code == "cost_tier_unavailable":
                 return self._rejected_placement(
@@ -882,6 +996,10 @@ class DeviceHubService:
                     resource_snapshot=self._build_rejection_resource_snapshot(
                         candidate_ids=eligible_ids,
                         tenant_id=normalized_tenant_id,
+                    ),
+                    placement_audit=self._build_placement_audit(
+                        candidate_ids=eligible_ids,
+                        reason_code="cost_tier_unavailable",
                     ),
                 )
             if constraint_reason_code == "cost_limit_exceeded":
@@ -895,6 +1013,10 @@ class DeviceHubService:
                         candidate_ids=eligible_ids,
                         tenant_id=normalized_tenant_id,
                     ),
+                    placement_audit=self._build_placement_audit(
+                        candidate_ids=eligible_ids,
+                        reason_code="cost_limit_exceeded",
+                    ),
                 )
             if constraint_reason_code == "required_capabilities_unavailable":
                 return self._rejected_placement(
@@ -906,6 +1028,10 @@ class DeviceHubService:
                     resource_snapshot=self._build_rejection_resource_snapshot(
                         candidate_ids=eligible_ids,
                         tenant_id=normalized_tenant_id,
+                    ),
+                    placement_audit=self._build_placement_audit(
+                        candidate_ids=eligible_ids,
+                        reason_code="required_capabilities_unavailable",
                     ),
                 )
             if constraint_reason_code == "avoid_capabilities_excluded":
@@ -919,6 +1045,10 @@ class DeviceHubService:
                         candidate_ids=eligible_ids,
                         tenant_id=normalized_tenant_id,
                     ),
+                    placement_audit=self._build_placement_audit(
+                        candidate_ids=eligible_ids,
+                        reason_code="avoid_capabilities_excluded",
+                    ),
                 )
             if not constrained_ids:
                 return self._rejected_placement(
@@ -928,6 +1058,10 @@ class DeviceHubService:
                     resource_snapshot=self._build_rejection_resource_snapshot(
                         candidate_ids=eligible_ids,
                         tenant_id=normalized_tenant_id,
+                    ),
+                    placement_audit=self._build_placement_audit(
+                        candidate_ids=eligible_ids,
+                        reason_code="no_eligible_device",
                     ),
                 )
 
@@ -947,6 +1081,10 @@ class DeviceHubService:
                 resource_snapshot=self._build_rejection_resource_snapshot(
                     candidate_ids=constrained_pool_ids,
                     tenant_id=normalized_tenant_id,
+                ),
+                placement_audit=self._build_placement_audit(
+                    candidate_ids=constrained_pool_ids,
+                    reason_code="no_eligible_device",
                 ),
             )
 
@@ -969,6 +1107,10 @@ class DeviceHubService:
                     eligible_devices=len(constrained_ids),
                     active_leases=quota_active_candidate_leases,
                     available_slots=len(quota_available_ids),
+                    placement_audit=self._build_placement_audit(
+                        candidate_ids=constrained_ids,
+                        reason_code="tenant_quota_exhausted",
+                    ),
                 )
         available_ids, active_candidate_leases = self._resolve_capacity(candidate_ids=constrained_ids)
         prefer_local = (
@@ -1011,6 +1153,10 @@ class DeviceHubService:
                 tenant_id=normalized_tenant_id or None,
                 tenant_active_leases=tenant_active_leases,
                 tenant_limit=tenant_limit,
+                placement_audit=self._build_placement_audit(
+                    candidate_ids=capacity_candidate_ids,
+                    reason_code="capacity_exhausted",
+                ),
             )
         device_id = choose_device(available_ids, load_by_device=load_by_device)
         if not device_id:
@@ -1023,6 +1169,10 @@ class DeviceHubService:
                 resource_snapshot=self._build_rejection_resource_snapshot(
                     candidate_ids=constrained_ids,
                     tenant_id=normalized_tenant_id,
+                ),
+                placement_audit=self._build_placement_audit(
+                    candidate_ids=constrained_ids,
+                    reason_code="route_unavailable",
                 ),
             )
         queue_depth = 0
@@ -1054,6 +1204,11 @@ class DeviceHubService:
             resource_snapshot=resource_snapshot,
             route_reason_code=fallback_reason_code,
             route_reason=fallback_reason,
+            placement_audit=self._build_placement_audit(
+                candidate_ids=constrained_ids,
+                selected_device_id=device_id,
+                reason_code=fallback_reason_code,
+            ),
         )
 
     def release_lease(self, lease_id: str) -> dict[str, Any]:

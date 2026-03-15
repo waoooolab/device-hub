@@ -33,6 +33,17 @@ _RESOURCE_SNAPSHOT_INT_FIELDS = (
 )
 _RESOURCE_SNAPSHOT_FLOAT_FIELDS = ("gpu_utilization_percent",)
 _RESOURCE_SNAPSHOT_STR_FIELDS = ("tenant_id",)
+_PLACEMENT_AUDIT_INT_FIELDS = ("candidate_device_count",)
+_PLACEMENT_AUDIT_BOOL_FIELDS = ("fallback_applied",)
+_PLACEMENT_AUDIT_STR_FIELDS = (
+    "selected_device_id",
+    "selected_execution_site",
+    "selected_region",
+    "selected_node_pool",
+    "fallback_reason_code",
+    "failure_domain",
+)
+_PLACEMENT_AUDIT_STR_LIST_FIELDS = ("candidate_execution_sites",)
 
 
 def _validate_load_by_device(load_by_device: Any) -> None:
@@ -72,6 +83,33 @@ def _filter_resource_snapshot(raw_snapshot: Any) -> dict[str, Any] | None:
     return snapshot
 
 
+def _filter_placement_audit(raw_audit: Any) -> dict[str, Any] | None:
+    if not isinstance(raw_audit, dict):
+        return None
+    audit: dict[str, Any] = {}
+    for key in _PLACEMENT_AUDIT_INT_FIELDS:
+        value = raw_audit.get(key)
+        if isinstance(value, int) and value >= 0:
+            audit[key] = value
+    for key in _PLACEMENT_AUDIT_BOOL_FIELDS:
+        value = raw_audit.get(key)
+        if isinstance(value, bool):
+            audit[key] = value
+    for key in _PLACEMENT_AUDIT_STR_FIELDS:
+        value = raw_audit.get(key)
+        if isinstance(value, str) and value.strip():
+            audit[key] = value
+    for key in _PLACEMENT_AUDIT_STR_LIST_FIELDS:
+        value = raw_audit.get(key)
+        if isinstance(value, list):
+            normalized = [item for item in value if isinstance(item, str) and item.strip()]
+            if normalized:
+                audit[key] = normalized
+    if not audit:
+        return None
+    return audit
+
+
 def _allocation_decision_payload(decision: dict[str, Any], capability: str) -> dict[str, Any]:
     outcome = str(decision["outcome"])
     capability_match = list(decision.get("capability_match", [capability]))
@@ -89,6 +127,9 @@ def _allocation_decision_payload(decision: dict[str, Any], capability: str) -> d
         filtered_snapshot = _filter_resource_snapshot(decision.get("resource_snapshot"))
         if isinstance(filtered_snapshot, dict):
             payload["resource_snapshot"] = filtered_snapshot
+        filtered_audit = _filter_placement_audit(decision.get("placement_audit"))
+        if isinstance(filtered_audit, dict):
+            payload["placement_audit"] = filtered_audit
         reason_code = normalize_optional_code_term(decision.get("reason_code"))
         if reason_code:
             payload["reason_code"] = reason_code
@@ -108,6 +149,9 @@ def _allocation_decision_payload(decision: dict[str, Any], capability: str) -> d
     filtered_snapshot = _filter_resource_snapshot(decision.get("resource_snapshot"))
     if isinstance(filtered_snapshot, dict):
         payload["resource_snapshot"] = filtered_snapshot
+    filtered_audit = _filter_placement_audit(decision.get("placement_audit"))
+    if isinstance(filtered_audit, dict):
+        payload["placement_audit"] = filtered_audit
     return payload
 
 

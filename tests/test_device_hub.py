@@ -96,6 +96,10 @@ def test_route_command_decision_returns_rejected_when_no_eligible_device() -> No
     snapshot = decision["resource_snapshot"]
     assert snapshot["eligible_devices"] == 0
     assert snapshot["available_slots"] == 0
+    audit = decision["placement_audit"]
+    assert audit["candidate_device_count"] == 0
+    assert audit["fallback_applied"] is False
+    assert audit["failure_domain"] == "capability"
 
 
 def test_allocate_placement_returns_rejected_when_no_candidate():
@@ -138,6 +142,10 @@ def test_allocate_placement_returns_route_unavailable_when_selector_returns_none
     assert snapshot["available_slots"] == 1
     assert snapshot["tenant_id"] == "t1"
     assert snapshot["tenant_active_leases"] == 0
+    audit = decision["placement_audit"]
+    assert audit["candidate_device_count"] == 1
+    assert audit["fallback_applied"] is False
+    assert audit["failure_domain"] == "route_selector"
 
 
 def test_capacity_snapshot_zero_utilization_without_eligible_devices() -> None:
@@ -889,6 +897,11 @@ def test_allocate_placement_prefers_local_and_falls_back_to_cloud() -> None:
     assert local_selected["outcome"] == "lease_acquired"
     assert local_selected["device_id"] == "desktop-local"
     assert local_selected.get("reason_code") is None
+    local_audit = local_selected["placement_audit"]
+    assert local_audit["candidate_device_count"] == 1
+    assert local_audit["selected_device_id"] == "desktop-local"
+    assert local_audit["selected_execution_site"] == "local"
+    assert local_audit["fallback_applied"] is False
 
     cloud_fallback = svc.allocate_placement(
         run_id="run-pref-local-2",
@@ -901,6 +914,13 @@ def test_allocate_placement_prefers_local_and_falls_back_to_cloud() -> None:
     assert cloud_fallback["device_id"] == "desktop-cloud"
     assert cloud_fallback["reason_code"] == "local_preference_fallback"
     assert "fallback" in cloud_fallback["reason"]
+    fallback_audit = cloud_fallback["placement_audit"]
+    assert fallback_audit["candidate_device_count"] == 1
+    assert fallback_audit["selected_device_id"] == "desktop-cloud"
+    assert fallback_audit["selected_execution_site"] == "cloud"
+    assert fallback_audit["fallback_applied"] is True
+    assert fallback_audit["fallback_reason_code"] == "local_preference_fallback"
+    assert fallback_audit["failure_domain"] == "execution_site"
 
 
 def test_allocate_placement_rejects_when_region_or_cost_constraints_fail() -> None:
@@ -972,6 +992,14 @@ def test_allocate_placement_fallbacks_to_alternate_node_pool_when_requested_pool
     assert decision["device_id"] == "gpu-node-pool-b"
     assert decision["reason_code"] == "node_pool_fallback"
     assert "alternate node_pool" in decision["reason"]
+    audit = decision["placement_audit"]
+    assert audit["candidate_device_count"] == 1
+    assert audit["selected_device_id"] == "gpu-node-pool-b"
+    assert audit["selected_execution_site"] == "cloud"
+    assert audit["selected_node_pool"] == "pool-b"
+    assert audit["fallback_applied"] is True
+    assert audit["fallback_reason_code"] == "node_pool_fallback"
+    assert audit["failure_domain"] == "node_pool"
 
 
 def test_allocate_placement_rejects_when_required_capabilities_not_fully_satisfied() -> None:
