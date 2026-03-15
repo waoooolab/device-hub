@@ -680,6 +680,77 @@ def test_allocate_placement_returns_route_rejected_event_when_capacity_exhausted
     assert snapshot["tenant_active_leases"] == 1
 
 
+def test_allocate_placement_returns_route_rejected_event_when_selector_unavailable(
+    monkeypatch,
+) -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {
+                "device_id": "gpu-node-route-unavailable",
+                "capabilities": ["compute.comfyui.local"],
+            }
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-route-unavailable"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-route-unavailable"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    monkeypatch.setattr(
+        "device_hub.service.choose_device",
+        lambda _candidate_ids, load_by_device=None: None,
+    )
+
+    response = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-route-unavailable-1",
+                "task_id": "task-route-unavailable-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    event = response.json()
+    assert event["event_type"] == "device.route.rejected"
+    assert event["payload"]["decision"]["reason_code"] == "route_unavailable"
+    assert "unable to select device" in event["payload"]["decision"]["reason"]
+    snapshot = event["payload"]["decision"]["resource_snapshot"]
+    assert snapshot["eligible_devices"] == 1
+    assert snapshot["active_leases"] == 0
+    assert snapshot["available_slots"] == 1
+    assert snapshot["tenant_id"] == "t1"
+    assert snapshot["tenant_active_leases"] == 0
+
+
 def test_allocate_placement_recovers_concurrent_capacity_retries_after_invalid_expiry_reconciliation() -> None:
     client = _setup_test_env()
     token = _token(["devices:write", "devices:read"])
