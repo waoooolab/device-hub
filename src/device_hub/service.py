@@ -727,6 +727,19 @@ class DeviceHubService:
                 tenant_active_leases=snapshot_tenant_active_leases,
                 tenant_limit=snapshot_tenant_limit,
             )
+            requested_capability = capability.strip()
+            existing_capability = snapshot_capability.strip()
+            if requested_capability and existing_capability and requested_capability != existing_capability:
+                return self._rejected_placement(
+                    run_id,
+                    task_id,
+                    capability,
+                    reason_code="capability_context_conflict",
+                    reason=(
+                        "active lease capability mismatch for identical run/task allocation request"
+                    ),
+                    resource_snapshot=replay_resource_snapshot,
+                )
             existing_tenant_id = (
                 existing_active_lease.tenant_id.strip()
                 if isinstance(existing_active_lease.tenant_id, str)

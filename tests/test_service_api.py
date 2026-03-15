@@ -1163,6 +1163,103 @@ def test_allocate_placement_replay_rejects_cross_tenant_context_conflict() -> No
     assert first_lease_id in app_module._hub.leases
 
 
+def test_allocate_placement_replay_rejects_capability_context_conflict() -> None:
+    client = _setup_test_env()
+    app_module._hub = DeviceHubService(max_active_leases_per_tenant=2)
+    token = _token(["devices:write", "devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {
+                "device_id": "gpu-node-replay-capability",
+                "capabilities": ["compute.comfyui.local", "compute.alt.local"],
+            }
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-replay-capability"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-replay-capability"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    first = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-api-replay-capability-1",
+                "task_id": "task-api-replay-capability-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert first.status_code == 200
+    first_event = first.json()
+    assert first_event["event_type"] == "device.lease.acquired"
+    first_lease_id = first_event["payload"]["decision"]["lease_id"]
+
+    conflict = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-api-replay-capability-1",
+                "task_id": "task-api-replay-capability-1",
+                "capability": "compute.alt.local",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert conflict.status_code == 200
+    conflict_event = conflict.json()
+    assert conflict_event["event_type"] == "device.route.rejected"
+    assert conflict_event["payload"]["decision"]["reason_code"] == "capability_context_conflict"
+    assert conflict_event["payload"]["decision"]["resource_snapshot"]["tenant_id"] == "t1"
+    assert conflict_event["payload"]["decision"]["resource_snapshot"]["tenant_active_leases"] == 1
+    assert conflict_event["payload"]["decision"]["resource_snapshot"]["tenant_limit"] == 2
+
+    capacity = client.get(
+        "/v1/placements/capacity",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert capacity.status_code == 200
+    capacity_payload = capacity.json()
+    assert capacity_payload["active_leases"] == 1
+    assert capacity_payload["lease_status_counts"]["active"] == 1
+    assert first_lease_id in app_module._hub.leases
+
+
 def test_allocate_placement_tenant_quota_recovers_after_release() -> None:
     client = _setup_test_env()
     app_module._hub = DeviceHubService(max_active_leases_per_tenant=1)
