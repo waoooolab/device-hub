@@ -433,6 +433,39 @@ def test_allocate_placement_reuses_active_lease_for_same_run_task_replay() -> No
     assert quota_rejected["reason_code"] == "tenant_quota_exhausted"
 
 
+def test_allocate_placement_replay_rejects_cross_tenant_context_conflict() -> None:
+    svc = DeviceHubService(max_active_leases_per_tenant=2)
+    svc.register_device("desktop-replay-tenant", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-replay-tenant")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-replay-tenant")
+
+    first = svc.allocate_placement(
+        run_id="run-replay-tenant-1",
+        task_id="task-replay-tenant-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-replay-tenant-1",
+        tenant_id="t1",
+    )
+    assert first["outcome"] == "lease_acquired"
+    first_lease_id = first["lease_id"]
+
+    conflict = svc.allocate_placement(
+        run_id="run-replay-tenant-1",
+        task_id="task-replay-tenant-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-replay-tenant-1-retry",
+        tenant_id="t2",
+    )
+    assert conflict["outcome"] == "rejected"
+    assert conflict["reason_code"] == "tenant_context_conflict"
+    assert conflict["resource_snapshot"]["tenant_id"] == "t2"
+    assert conflict["resource_snapshot"]["tenant_active_leases"] == 0
+
+    active_lease_ids = [lease.lease_id for lease in svc.leases.values() if lease.status == "active"]
+    assert active_lease_ids == [first_lease_id]
+
+
 def test_allocate_placement_rejects_when_tenant_quota_is_exhausted() -> None:
     svc = DeviceHubService(max_active_leases_per_tenant=1)
     svc.register_device("desktop-quota-a", ["compute.comfyui.local"])

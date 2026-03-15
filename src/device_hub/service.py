@@ -727,6 +727,22 @@ class DeviceHubService:
                 tenant_active_leases=snapshot_tenant_active_leases,
                 tenant_limit=snapshot_tenant_limit,
             )
+            existing_tenant_id = (
+                existing_active_lease.tenant_id.strip()
+                if isinstance(existing_active_lease.tenant_id, str)
+                else ""
+            )
+            if normalized_tenant_id and existing_tenant_id and normalized_tenant_id != existing_tenant_id:
+                return self._rejected_placement(
+                    run_id,
+                    task_id,
+                    capability,
+                    reason_code="tenant_context_conflict",
+                    reason=(
+                        "active lease tenant context mismatch for identical run/task allocation request"
+                    ),
+                    resource_snapshot=replay_resource_snapshot,
+                )
             replay_decision: dict[str, Any] = {
                 "run_id": run_id,
                 "task_id": task_id,
