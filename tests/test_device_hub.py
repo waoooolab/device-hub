@@ -346,6 +346,9 @@ def test_allocate_placement_rejects_when_capacity_is_exhausted() -> None:
     )
     assert second["outcome"] == "rejected"
     assert second["reason_code"] == "capacity_exhausted"
+    assert second["resource_snapshot"]["eligible_devices"] == 1
+    assert second["resource_snapshot"]["active_leases"] == 1
+    assert second["resource_snapshot"]["available_slots"] == 0
 
 
 def test_allocate_placement_rejects_when_tenant_quota_is_exhausted() -> None:
@@ -386,6 +389,9 @@ def test_allocate_placement_rejects_when_tenant_quota_is_exhausted() -> None:
     assert second["resource_snapshot"]["tenant_id"] == "t1"
     assert second["resource_snapshot"]["tenant_active_leases"] == 1
     assert second["resource_snapshot"]["tenant_limit"] == 1
+    assert second["resource_snapshot"]["eligible_devices"] == 2
+    assert second["resource_snapshot"]["active_leases"] == 1
+    assert second["resource_snapshot"]["available_slots"] == 1
 
     third = svc.allocate_placement(
         run_id="run-quota-3",

@@ -676,6 +676,8 @@ def test_allocate_placement_returns_route_rejected_event_when_capacity_exhausted
     assert snapshot["eligible_devices"] == 1
     assert snapshot["active_leases"] == 1
     assert snapshot["available_slots"] == 0
+    assert snapshot["tenant_id"] == "t1"
+    assert snapshot["tenant_active_leases"] == 1
 
 
 def test_allocate_placement_recovers_concurrent_capacity_retries_after_invalid_expiry_reconciliation() -> None:
@@ -868,6 +870,9 @@ def test_allocate_placement_returns_route_rejected_event_when_tenant_quota_exhau
     assert snapshot["tenant_id"] == "t1"
     assert snapshot["tenant_active_leases"] == 1
     assert snapshot["tenant_limit"] == 1
+    assert snapshot["eligible_devices"] == 2
+    assert snapshot["active_leases"] == 1
+    assert snapshot["available_slots"] == 1
 
 
 def test_allocate_placement_tenant_quota_can_use_envelope_tenant_fallback() -> None:

@@ -86,6 +86,10 @@ class DeviceHubService:
         *,
         eligible_devices: int,
         active_leases: int,
+        available_slots: int,
+        tenant_id: str | None = None,
+        tenant_active_leases: int = 0,
+        tenant_limit: int | None = None,
     ) -> dict[str, Any]:
         return {
             "run_id": run_id,
@@ -94,11 +98,15 @@ class DeviceHubService:
             "reason_code": "capacity_exhausted",
             "reason": "all eligible devices are occupied by active leases",
             "capability_match": [capability],
-            "resource_snapshot": {
-                "eligible_devices": eligible_devices,
-                "active_leases": active_leases,
-                "available_slots": max(eligible_devices - active_leases, 0),
-            },
+            "resource_snapshot": _build_allocation_resource_snapshot(
+                queue_depth=0,
+                eligible_devices=eligible_devices,
+                active_leases=active_leases,
+                available_slots=available_slots,
+                tenant_id=tenant_id,
+                tenant_active_leases=tenant_active_leases,
+                tenant_limit=tenant_limit,
+            ),
         }
 
     @staticmethod
@@ -110,6 +118,9 @@ class DeviceHubService:
         tenant_id: str,
         tenant_active_leases: int,
         tenant_limit: int,
+        eligible_devices: int,
+        active_leases: int,
+        available_slots: int,
     ) -> dict[str, Any]:
         return {
             "run_id": run_id,
@@ -118,11 +129,15 @@ class DeviceHubService:
             "reason_code": "tenant_quota_exhausted",
             "reason": f"tenant '{tenant_id}' reached active lease limit {tenant_limit}",
             "capability_match": [capability],
-            "resource_snapshot": {
-                "tenant_id": tenant_id,
-                "tenant_active_leases": tenant_active_leases,
-                "tenant_limit": tenant_limit,
-            },
+            "resource_snapshot": _build_allocation_resource_snapshot(
+                queue_depth=0,
+                eligible_devices=eligible_devices,
+                active_leases=active_leases,
+                available_slots=available_slots,
+                tenant_id=tenant_id,
+                tenant_active_leases=tenant_active_leases,
+                tenant_limit=tenant_limit,
+            ),
         }
 
     @staticmethod
@@ -804,7 +819,15 @@ class DeviceHubService:
             fallback_reason_code = locality_reason_code
             fallback_reason = locality_reason
         if not constrained_ids:
-            return self._rejected_placement(run_id, task_id, capability)
+            return self._rejected_placement(
+                run_id,
+                task_id,
+                capability,
+                resource_snapshot=self._build_rejection_resource_snapshot(
+                    candidate_ids=constrained_pool_ids,
+                    tenant_id=normalized_tenant_id,
+                ),
+            )
 
         tenant_limit = self._resolve_tenant_active_lease_limit(normalized_tenant_id)
         tenant_active_leases = 0
@@ -812,6 +835,9 @@ class DeviceHubService:
             tenant_active_leases = self._active_lease_count_for_tenant(normalized_tenant_id)
         if tenant_limit is not None:
             if tenant_active_leases >= tenant_limit:
+                quota_available_ids, quota_active_candidate_leases = self._resolve_capacity(
+                    candidate_ids=constrained_ids
+                )
                 return self._rejected_tenant_quota(
                     run_id,
                     task_id,
@@ -819,6 +845,9 @@ class DeviceHubService:
                     tenant_id=normalized_tenant_id,
                     tenant_active_leases=tenant_active_leases,
                     tenant_limit=tenant_limit,
+                    eligible_devices=len(constrained_ids),
+                    active_leases=quota_active_candidate_leases,
+                    available_slots=len(quota_available_ids),
                 )
         available_ids, active_candidate_leases = self._resolve_capacity(candidate_ids=constrained_ids)
         prefer_local = (
@@ -846,13 +875,21 @@ class DeviceHubService:
                         "no local device has free capacity; fallback to non-local device"
                     )
         if not available_ids:
-            capacity_eligible = len(constrained_pool_ids) if prefer_local else len(constrained_ids)
+            capacity_candidate_ids = constrained_pool_ids if prefer_local else constrained_ids
+            capacity_active_lease_devices = self._active_lease_device_ids()
+            capacity_active_leases = sum(
+                1 for device_id in capacity_candidate_ids if device_id in capacity_active_lease_devices
+            )
             return self._rejected_capacity(
                 run_id,
                 task_id,
                 capability,
-                eligible_devices=capacity_eligible,
-                active_leases=active_candidate_leases,
+                eligible_devices=len(capacity_candidate_ids),
+                active_leases=capacity_active_leases,
+                available_slots=max(len(capacity_candidate_ids) - capacity_active_leases, 0),
+                tenant_id=normalized_tenant_id or None,
+                tenant_active_leases=tenant_active_leases,
+                tenant_limit=tenant_limit,
             )
         device_id = choose_device(available_ids, load_by_device=load_by_device)
         if not device_id:
