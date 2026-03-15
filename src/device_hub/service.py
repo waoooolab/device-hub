@@ -42,6 +42,7 @@ class DeviceHubService:
     lease_expired_total: int = 0
     lease_expire_last_sweep_at: str | None = None
     lease_expire_last_sweep_expired: int = 0
+    active_lease_index_by_run_task: dict[tuple[str, str], str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.max_active_leases_per_tenant is not None:
@@ -183,6 +184,7 @@ class DeviceHubService:
             lease_expires_at=lease_expires_at,
             tenant_id=tenant_id,
         )
+        self._index_active_lease(self.leases[lease_id])
         decision: dict[str, Any] = {
             "run_id": run_id,
             "task_id": task_id,
@@ -430,11 +432,40 @@ class DeviceHubService:
     def _active_lease_device_ids(self) -> set[str]:
         return {lease.device_id for lease in self.leases.values() if lease.status == "active"}
 
+    @staticmethod
+    def _run_task_index_key(*, run_id: str, task_id: str) -> tuple[str, str]:
+        return run_id, task_id
+
+    def _index_active_lease(self, lease: LeaseRecord) -> None:
+        if lease.status != "active":
+            return
+        key = self._run_task_index_key(run_id=lease.run_id, task_id=lease.task_id)
+        self.active_lease_index_by_run_task[key] = lease.lease_id
+
+    def _unindex_active_lease(self, lease: LeaseRecord) -> None:
+        key = self._run_task_index_key(run_id=lease.run_id, task_id=lease.task_id)
+        current_lease_id = self.active_lease_index_by_run_task.get(key)
+        if current_lease_id == lease.lease_id:
+            self.active_lease_index_by_run_task.pop(key, None)
+
     def _find_active_lease_for_run_task(self, *, run_id: str, task_id: str) -> LeaseRecord | None:
+        key = self._run_task_index_key(run_id=run_id, task_id=task_id)
+        indexed_lease_id = self.active_lease_index_by_run_task.get(key)
+        if isinstance(indexed_lease_id, str):
+            indexed_lease = self.leases.get(indexed_lease_id)
+            if (
+                indexed_lease is not None
+                and indexed_lease.status == "active"
+                and indexed_lease.run_id == run_id
+                and indexed_lease.task_id == task_id
+            ):
+                return indexed_lease
+            self.active_lease_index_by_run_task.pop(key, None)
         for lease in self.leases.values():
             if lease.status != "active":
                 continue
             if lease.run_id == run_id and lease.task_id == task_id:
+                self.active_lease_index_by_run_task[key] = lease.lease_id
                 return lease
         return None
 
@@ -504,6 +535,7 @@ class DeviceHubService:
             expires_at = self._parse_iso_datetime(lease.lease_expires_at)
             if expires_at is None:
                 # Defensive recovery: malformed expiry should never pin capacity.
+                self._unindex_active_lease(lease)
                 lease.status = "expired"
                 lease.expired_at = now_iso
                 lease.expire_reason_code = "ttl_expired"
@@ -513,6 +545,7 @@ class DeviceHubService:
                 continue
             if expires_at > now:
                 continue
+            self._unindex_active_lease(lease)
             lease.status = "expired"
             lease.expired_at = now_iso
             lease.expire_reason_code = "ttl_expired"
@@ -1018,6 +1051,7 @@ class DeviceHubService:
         if lease is None:
             raise KeyError(f"lease not found: {lease_id}")
         if lease.status == "released":
+            self._unindex_active_lease(lease)
             return {
                 "run_id": lease.run_id,
                 "task_id": lease.task_id,
@@ -1026,8 +1060,10 @@ class DeviceHubService:
                 "lease_id": lease.lease_id,
             }
         if lease.status == "expired":
+            self._unindex_active_lease(lease)
             raise ValueError("lease already expired")
 
+        self._unindex_active_lease(lease)
         lease.status = "released"
         lease.released_at = datetime.now(timezone.utc).isoformat()
         if lease.device_id in self.registry.devices:
@@ -1049,8 +1085,10 @@ class DeviceHubService:
         if lease is None:
             raise KeyError(f"lease not found: {lease_id}")
         if lease.status == "released":
+            self._unindex_active_lease(lease)
             raise ValueError("lease already released")
         if lease.status == "expired":
+            self._unindex_active_lease(lease)
             existing_reason_code = normalize_optional_code_term(lease.expire_reason_code)
             return {
                 "run_id": lease.run_id,
@@ -1061,6 +1099,7 @@ class DeviceHubService:
                 "reason_code": existing_reason_code or normalized_reason_code,
             }
 
+        self._unindex_active_lease(lease)
         lease.status = "expired"
         lease.expired_at = datetime.now(timezone.utc).isoformat()
         lease.expire_reason_code = normalized_reason_code
