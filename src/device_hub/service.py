@@ -430,6 +430,14 @@ class DeviceHubService:
     def _active_lease_device_ids(self) -> set[str]:
         return {lease.device_id for lease in self.leases.values() if lease.status == "active"}
 
+    def _find_active_lease_for_run_task(self, *, run_id: str, task_id: str) -> LeaseRecord | None:
+        for lease in self.leases.values():
+            if lease.status != "active":
+                continue
+            if lease.run_id == run_id and lease.task_id == task_id:
+                return lease
+        return None
+
     def _active_lease_count_for_tenant(self, tenant_id: str) -> int:
         normalized = tenant_id.strip()
         if not normalized:
@@ -694,6 +702,46 @@ class DeviceHubService:
         """Select a device and mint a short-lived lease descriptor."""
         self._expire_due_leases()
         normalized_tenant_id = tenant_id.strip() if isinstance(tenant_id, str) else ""
+        existing_active_lease = self._find_active_lease_for_run_task(run_id=run_id, task_id=task_id)
+        if existing_active_lease is not None:
+            snapshot_capability = existing_active_lease.capability or capability
+            snapshot_candidate_ids = self._eligible_devices_for_capability(snapshot_capability)
+            snapshot_available_ids, snapshot_active_candidate_leases = self._resolve_capacity(
+                candidate_ids=snapshot_candidate_ids
+            )
+            snapshot_queue_depth = 0
+            if load_by_device and existing_active_lease.device_id in load_by_device:
+                snapshot_queue_depth = max(0, int(load_by_device.get(existing_active_lease.device_id, 0)))
+            snapshot_tenant_id = normalized_tenant_id or (existing_active_lease.tenant_id or "")
+            snapshot_tenant_active_leases = 0
+            snapshot_tenant_limit = None
+            if snapshot_tenant_id:
+                snapshot_tenant_active_leases = self._active_lease_count_for_tenant(snapshot_tenant_id)
+                snapshot_tenant_limit = self._resolve_tenant_active_lease_limit(snapshot_tenant_id)
+            replay_resource_snapshot = _build_allocation_resource_snapshot(
+                queue_depth=snapshot_queue_depth,
+                eligible_devices=len(snapshot_candidate_ids),
+                active_leases=snapshot_active_candidate_leases,
+                available_slots=len(snapshot_available_ids),
+                tenant_id=snapshot_tenant_id or None,
+                tenant_active_leases=snapshot_tenant_active_leases,
+                tenant_limit=snapshot_tenant_limit,
+            )
+            replay_decision: dict[str, Any] = {
+                "run_id": run_id,
+                "task_id": task_id,
+                "outcome": "lease_acquired",
+                "device_id": existing_active_lease.device_id,
+                "lease_id": existing_active_lease.lease_id,
+                "lease_expires_at": existing_active_lease.lease_expires_at,
+                "capability_match": [snapshot_capability],
+                "trace_id": existing_active_lease.trace_id,
+                "resource_snapshot": replay_resource_snapshot,
+                "reason_code": "idempotent_replay",
+                "reason": "active lease reused for identical run/task allocation request",
+            }
+            return replay_decision
+
         eligible_ids = self._eligible_devices_for_capability(capability)
         if not eligible_ids:
             return self._rejected_placement(

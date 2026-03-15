@@ -946,6 +946,128 @@ def test_allocate_placement_returns_route_rejected_event_when_tenant_quota_exhau
     assert snapshot["available_slots"] == 1
 
 
+def test_allocate_placement_replays_existing_active_lease_for_duplicate_run_task() -> None:
+    client = _setup_test_env()
+    app_module._hub = DeviceHubService(max_active_leases_per_tenant=1)
+    token = _token(["devices:write", "devices:read"])
+
+    client.post(
+        "/v1/devices/register",
+        json=_command_envelope(
+            {
+                "device_id": "gpu-node-replay",
+                "capabilities": ["compute.comfyui.local"],
+            }
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    pair_req = client.post(
+        "/v1/devices/pairing/request",
+        json=_command_envelope({"device_id": "gpu-node-replay"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    code = pair_req.json()["payload"]["code"]
+    client.post(
+        "/v1/devices/pairing/approve",
+        json=_command_envelope({"code": code}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/devices/heartbeat",
+        json=_command_envelope({"device_id": "gpu-node-replay"}),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    allocate_payload = {
+        "run_id": "run-api-replay-1",
+        "task_id": "task-api-replay-1",
+        "execution_profile": {
+            "execution_mode": "compute",
+            "inference_target": "none",
+            "resource_class": "gpu",
+            "placement_constraints": {
+                "tenant_id": "t1",
+                "required_capabilities": ["compute.comfyui.local"],
+            },
+        },
+    }
+
+    first = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            allocate_payload,
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert first.status_code == 200
+    first_event = first.json()
+    assert first_event["event_type"] == "device.lease.acquired"
+    first_decision = first_event["payload"]["decision"]
+    assert first_decision["outcome"] == "lease_acquired"
+    first_lease_id = first_decision["lease_id"]
+
+    second = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                **allocate_payload,
+                "load_by_device": {"gpu-node-replay": 3},
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert second.status_code == 200
+    second_event = second.json()
+    assert second_event["event_type"] == "device.lease.acquired"
+    second_decision = second_event["payload"]["decision"]
+    assert second_decision["outcome"] == "lease_acquired"
+    assert second_decision["lease_id"] == first_lease_id
+    assert second_decision["device_id"] == first_decision["device_id"]
+    assert second_decision["reason_code"] == "idempotent_replay"
+    assert second_decision["resource_snapshot"]["eligible_devices"] == 1
+    assert second_decision["resource_snapshot"]["active_leases"] == 1
+    assert second_decision["resource_snapshot"]["available_slots"] == 0
+    assert second_decision["resource_snapshot"]["tenant_id"] == "t1"
+    assert second_decision["resource_snapshot"]["tenant_active_leases"] == 1
+    assert second_decision["resource_snapshot"]["tenant_limit"] == 1
+
+    capacity = client.get(
+        "/v1/placements/capacity",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert capacity.status_code == 200
+    capacity_payload = capacity.json()
+    assert capacity_payload["active_leases"] == 1
+    assert capacity_payload["available_slots"] == 0
+
+    quota_rejected = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-api-replay-2",
+                "task_id": "task-api-replay-2",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert quota_rejected.status_code == 200
+    quota_event = quota_rejected.json()
+    assert quota_event["event_type"] == "device.route.rejected"
+    assert quota_event["payload"]["decision"]["reason_code"] == "tenant_quota_exhausted"
+
+
 def test_allocate_placement_tenant_quota_recovers_after_release() -> None:
     client = _setup_test_env()
     app_module._hub = DeviceHubService(max_active_leases_per_tenant=1)

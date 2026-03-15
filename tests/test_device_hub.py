@@ -381,6 +381,58 @@ def test_allocate_placement_rejects_when_capacity_is_exhausted() -> None:
     assert second["resource_snapshot"]["available_slots"] == 0
 
 
+def test_allocate_placement_reuses_active_lease_for_same_run_task_replay() -> None:
+    svc = DeviceHubService(max_active_leases_per_tenant=1)
+    svc.register_device("desktop-replay", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-replay")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-replay")
+
+    first = svc.allocate_placement(
+        run_id="run-replay-1",
+        task_id="task-replay-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-replay-1",
+        tenant_id="t1",
+    )
+    assert first["outcome"] == "lease_acquired"
+    first_lease_id = first["lease_id"]
+
+    replay = svc.allocate_placement(
+        run_id="run-replay-1",
+        task_id="task-replay-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-replay-1-retry",
+        tenant_id="t1",
+        load_by_device={"desktop-replay": 2},
+    )
+    assert replay["outcome"] == "lease_acquired"
+    assert replay["lease_id"] == first_lease_id
+    assert replay["device_id"] == first["device_id"]
+    assert replay["lease_expires_at"] == first["lease_expires_at"]
+    assert replay["reason_code"] == "idempotent_replay"
+    assert replay["resource_snapshot"]["eligible_devices"] == 1
+    assert replay["resource_snapshot"]["active_leases"] == 1
+    assert replay["resource_snapshot"]["available_slots"] == 0
+    assert replay["resource_snapshot"]["queue_depth"] == 2
+    assert replay["resource_snapshot"]["tenant_id"] == "t1"
+    assert replay["resource_snapshot"]["tenant_active_leases"] == 1
+    assert replay["resource_snapshot"]["tenant_limit"] == 1
+
+    active_lease_ids = [lease.lease_id for lease in svc.leases.values() if lease.status == "active"]
+    assert active_lease_ids == [first_lease_id]
+
+    quota_rejected = svc.allocate_placement(
+        run_id="run-replay-2",
+        task_id="task-replay-2",
+        capability="compute.comfyui.local",
+        trace_id="trace-replay-2",
+        tenant_id="t1",
+    )
+    assert quota_rejected["outcome"] == "rejected"
+    assert quota_rejected["reason_code"] == "tenant_quota_exhausted"
+
+
 def test_allocate_placement_rejects_when_tenant_quota_is_exhausted() -> None:
     svc = DeviceHubService(max_active_leases_per_tenant=1)
     svc.register_device("desktop-quota-a", ["compute.comfyui.local"])
