@@ -500,6 +500,118 @@ def test_allocate_placement_replay_rejects_capability_context_conflict() -> None
     assert active_lease_ids == [first_lease_id]
 
 
+def test_allocate_placement_replay_index_clears_after_release() -> None:
+    svc = DeviceHubService(max_active_leases_per_tenant=1)
+    svc.register_device("desktop-replay-release", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-replay-release")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-replay-release")
+
+    first = svc.allocate_placement(
+        run_id="run-replay-release-1",
+        task_id="task-replay-release-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-replay-release-1",
+        tenant_id="t1",
+    )
+    first_lease_id = first["lease_id"]
+    replay_key = ("run-replay-release-1", "task-replay-release-1")
+    assert svc.active_lease_index_by_run_task.get(replay_key) == first_lease_id
+
+    replay = svc.allocate_placement(
+        run_id="run-replay-release-1",
+        task_id="task-replay-release-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-replay-release-1-retry",
+        tenant_id="t1",
+    )
+    assert replay["lease_id"] == first_lease_id
+    assert replay["reason_code"] == "idempotent_replay"
+
+    released = svc.release_lease(first_lease_id)
+    assert released["outcome"] == "lease_released"
+    assert replay_key not in svc.active_lease_index_by_run_task
+
+    reacquired = svc.allocate_placement(
+        run_id="run-replay-release-1",
+        task_id="task-replay-release-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-replay-release-1-new",
+        tenant_id="t1",
+    )
+    assert reacquired["outcome"] == "lease_acquired"
+    assert reacquired["lease_id"] != first_lease_id
+    assert reacquired.get("reason_code") != "idempotent_replay"
+    assert svc.active_lease_index_by_run_task.get(replay_key) == reacquired["lease_id"]
+
+
+def test_allocate_placement_replay_index_clears_after_expire() -> None:
+    svc = DeviceHubService(max_active_leases_per_tenant=1)
+    svc.register_device("desktop-replay-expire", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-replay-expire")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-replay-expire")
+
+    first = svc.allocate_placement(
+        run_id="run-replay-expire-1",
+        task_id="task-replay-expire-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-replay-expire-1",
+        tenant_id="t1",
+    )
+    first_lease_id = first["lease_id"]
+    replay_key = ("run-replay-expire-1", "task-replay-expire-1")
+    assert svc.active_lease_index_by_run_task.get(replay_key) == first_lease_id
+
+    expired = svc.expire_lease(first_lease_id, reason_code="ttl_expired")
+    assert expired["outcome"] == "lease_expired"
+    assert replay_key not in svc.active_lease_index_by_run_task
+
+    reacquired = svc.allocate_placement(
+        run_id="run-replay-expire-1",
+        task_id="task-replay-expire-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-replay-expire-1-new",
+        tenant_id="t1",
+    )
+    assert reacquired["outcome"] == "lease_acquired"
+    assert reacquired["lease_id"] != first_lease_id
+    assert reacquired.get("reason_code") != "idempotent_replay"
+    assert svc.active_lease_index_by_run_task.get(replay_key) == reacquired["lease_id"]
+
+
+def test_allocate_placement_replay_index_self_heals_stale_entry() -> None:
+    svc = DeviceHubService(max_active_leases_per_tenant=1)
+    svc.register_device("desktop-replay-heal", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-replay-heal")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-replay-heal")
+
+    first = svc.allocate_placement(
+        run_id="run-replay-heal-1",
+        task_id="task-replay-heal-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-replay-heal-1",
+        tenant_id="t1",
+    )
+    first_lease_id = first["lease_id"]
+    replay_key = ("run-replay-heal-1", "task-replay-heal-1")
+    assert svc.active_lease_index_by_run_task.get(replay_key) == first_lease_id
+
+    svc.active_lease_index_by_run_task[replay_key] = "lease-missing"
+    replay = svc.allocate_placement(
+        run_id="run-replay-heal-1",
+        task_id="task-replay-heal-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-replay-heal-1-retry",
+        tenant_id="t1",
+    )
+    assert replay["outcome"] == "lease_acquired"
+    assert replay["lease_id"] == first_lease_id
+    assert replay["reason_code"] == "idempotent_replay"
+    assert svc.active_lease_index_by_run_task.get(replay_key) == first_lease_id
+
+
 def test_allocate_placement_rejects_when_tenant_quota_is_exhausted() -> None:
     svc = DeviceHubService(max_active_leases_per_tenant=1)
     svc.register_device("desktop-quota-a", ["compute.comfyui.local"])
