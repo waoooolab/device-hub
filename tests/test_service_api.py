@@ -1260,6 +1260,110 @@ def test_allocate_placement_replay_rejects_capability_context_conflict() -> None
     assert first_lease_id in app_module._hub.leases
 
 
+def test_allocate_placement_replay_after_terminal_lease_acquires_new_lease() -> None:
+    terminal_cases = (
+        ("release", "/v1/placements/release", "device.placement.release", {"lease_id": "__LEASE_ID__"}, "device.lease.released"),
+        (
+            "expire",
+            "/v1/placements/expire",
+            "device.placement.expire",
+            {"lease_id": "__LEASE_ID__", "reason_code": "ttl_expired"},
+            "device.lease.expired",
+        ),
+    )
+
+    for suffix, endpoint, command_type, template_payload, expected_event in terminal_cases:
+        client = _setup_test_env()
+        app_module._hub = DeviceHubService(max_active_leases_per_tenant=1)
+        token = _token(["devices:write", "devices:read"])
+
+        device_id = f"gpu-node-replay-terminal-{suffix}"
+        client.post(
+            "/v1/devices/register",
+            json=_command_envelope(
+                {
+                    "device_id": device_id,
+                    "capabilities": ["compute.comfyui.local"],
+                }
+            ),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        pair_req = client.post(
+            "/v1/devices/pairing/request",
+            json=_command_envelope({"device_id": device_id}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        code = pair_req.json()["payload"]["code"]
+        client.post(
+            "/v1/devices/pairing/approve",
+            json=_command_envelope({"code": code}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        client.post(
+            "/v1/devices/heartbeat",
+            json=_command_envelope({"device_id": device_id}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        allocate_payload = {
+            "run_id": f"run-api-replay-terminal-{suffix}",
+            "task_id": f"task-api-replay-terminal-{suffix}",
+            "execution_profile": {
+                "execution_mode": "compute",
+                "inference_target": "none",
+                "resource_class": "gpu",
+                "placement_constraints": {
+                    "tenant_id": "t1",
+                    "required_capabilities": ["compute.comfyui.local"],
+                },
+            },
+        }
+
+        first = client.post(
+            "/v1/placements/allocate",
+            json=_command_envelope(allocate_payload, command_type="device.placement.allocate"),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert first.status_code == 200
+        first_event = first.json()
+        assert first_event["event_type"] == "device.lease.acquired"
+        first_lease_id = first_event["payload"]["decision"]["lease_id"]
+
+        replay = client.post(
+            "/v1/placements/allocate",
+            json=_command_envelope(allocate_payload, command_type="device.placement.allocate"),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert replay.status_code == 200
+        replay_event = replay.json()
+        assert replay_event["event_type"] == "device.lease.acquired"
+        replay_decision = replay_event["payload"]["decision"]
+        assert replay_decision["lease_id"] == first_lease_id
+        assert replay_decision["reason_code"] == "idempotent_replay"
+
+        terminal_payload = dict(template_payload)
+        terminal_payload["lease_id"] = first_lease_id
+        terminal = client.post(
+            endpoint,
+            json=_command_envelope(terminal_payload, command_type=command_type),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert terminal.status_code == 200
+        assert terminal.json()["event_type"] == expected_event
+
+        reacquired = client.post(
+            "/v1/placements/allocate",
+            json=_command_envelope(allocate_payload, command_type="device.placement.allocate"),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert reacquired.status_code == 200
+        reacquired_event = reacquired.json()
+        assert reacquired_event["event_type"] == "device.lease.acquired"
+        reacquired_decision = reacquired_event["payload"]["decision"]
+        assert reacquired_decision["lease_id"] != first_lease_id
+        assert reacquired_decision.get("reason_code") != "idempotent_replay"
+
+
 def test_allocate_placement_tenant_quota_recovers_after_release() -> None:
     client = _setup_test_env()
     app_module._hub = DeviceHubService(max_active_leases_per_tenant=1)
