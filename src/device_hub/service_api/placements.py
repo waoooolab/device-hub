@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from device_hub.code_terms import normalize_optional_code_term
 from device_hub.service import DeviceHubService
 
 from .contracts import (
@@ -88,16 +89,19 @@ def _allocation_decision_payload(decision: dict[str, Any], capability: str) -> d
         filtered_snapshot = _filter_resource_snapshot(decision.get("resource_snapshot"))
         if isinstance(filtered_snapshot, dict):
             payload["resource_snapshot"] = filtered_snapshot
-        reason_code = decision.get("reason_code")
-        if isinstance(reason_code, str) and reason_code.strip():
+        reason_code = normalize_optional_code_term(decision.get("reason_code"))
+        if reason_code:
             payload["reason_code"] = reason_code
         reason = decision.get("reason")
         if isinstance(reason, str) and reason.strip():
             payload["reason"] = reason
         return payload
+    normalized_reason_code = normalize_optional_code_term(decision.get("reason_code"))
+    if normalized_reason_code is None:
+        normalized_reason_code = "unknown_reason"
     payload = {
         "outcome": outcome,
-        "reason_code": str(decision["reason_code"]),
+        "reason_code": normalized_reason_code,
         "reason": str(decision["reason"]),
         "capability_match": capability_match,
     }
@@ -247,10 +251,10 @@ def expire_placement_response(
     validate_write(envelope, claims)
     payload = extract_payload(envelope, required_fields=["lease_id"])
     lease_id = payload.get("lease_id")
-    reason_code = payload.get("reason_code", "ttl_expired")
+    reason_code = normalize_optional_code_term(payload.get("reason_code", "ttl_expired"))
     if not isinstance(lease_id, str) or not lease_id:
         raise HTTPException(status_code=422, detail="payload.lease_id must be non-empty string")
-    if not isinstance(reason_code, str) or not reason_code:
+    if reason_code is None:
         raise HTTPException(status_code=422, detail="payload.reason_code must be non-empty string")
 
     try:
@@ -288,10 +292,10 @@ def preempt_placement_response(
     validate_write(envelope, claims)
     payload = extract_payload(envelope, required_fields=["lease_id"])
     lease_id = payload.get("lease_id")
-    reason_code = payload.get("reason_code", "preempted_by_policy")
+    reason_code = normalize_optional_code_term(payload.get("reason_code", "preempted_by_policy"))
     if not isinstance(lease_id, str) or not lease_id:
         raise HTTPException(status_code=422, detail="payload.lease_id must be non-empty string")
-    if not isinstance(reason_code, str) or not reason_code.strip():
+    if reason_code is None:
         raise HTTPException(status_code=422, detail="payload.reason_code must be non-empty string")
 
     try:

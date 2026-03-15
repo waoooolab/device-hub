@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
+from .code_terms import normalize_optional_code_term
 from .devices.pairing import PairingManager, PairingRequest
 from .devices.registry import DeviceRecord, DeviceRegistry
 from .resources.capability_registry import CapabilityRegistry
@@ -177,8 +178,9 @@ class DeviceHubService:
             decision["score"] = score
         if isinstance(resource_snapshot, dict) and resource_snapshot:
             decision["resource_snapshot"] = dict(resource_snapshot)
-        if route_reason_code:
-            decision["reason_code"] = route_reason_code
+        normalized_route_reason_code = normalize_optional_code_term(route_reason_code)
+        if normalized_route_reason_code:
+            decision["reason_code"] = normalized_route_reason_code
         if route_reason:
             decision["reason"] = route_reason
         return decision
@@ -847,6 +849,9 @@ class DeviceHubService:
         }
 
     def expire_lease(self, lease_id: str, *, reason_code: str = "ttl_expired") -> dict[str, Any]:
+        normalized_reason_code = normalize_optional_code_term(reason_code)
+        if normalized_reason_code is None:
+            raise ValueError("reason_code must be non-empty string")
         self._expire_due_leases()
         lease = self.leases.get(lease_id)
         if lease is None:
@@ -854,18 +859,19 @@ class DeviceHubService:
         if lease.status == "released":
             raise ValueError("lease already released")
         if lease.status == "expired":
+            existing_reason_code = normalize_optional_code_term(lease.expire_reason_code)
             return {
                 "run_id": lease.run_id,
                 "task_id": lease.task_id,
                 "outcome": "lease_expired",
                 "device_id": lease.device_id,
                 "lease_id": lease.lease_id,
-                "reason_code": lease.expire_reason_code or reason_code,
+                "reason_code": existing_reason_code or normalized_reason_code,
             }
 
         lease.status = "expired"
         lease.expired_at = datetime.now(timezone.utc).isoformat()
-        lease.expire_reason_code = reason_code
+        lease.expire_reason_code = normalized_reason_code
         if lease.device_id in self.registry.devices:
             self.registry.heartbeat(lease.device_id)
         return {
@@ -874,7 +880,7 @@ class DeviceHubService:
             "outcome": "lease_expired",
             "device_id": lease.device_id,
             "lease_id": lease.lease_id,
-            "reason_code": reason_code,
+            "reason_code": normalized_reason_code,
         }
 
     def preempt_lease(
@@ -883,8 +889,8 @@ class DeviceHubService:
         *,
         reason_code: str = "preempted_by_policy",
     ) -> dict[str, Any]:
-        normalized_reason_code = reason_code.strip() if isinstance(reason_code, str) else ""
-        if not normalized_reason_code:
+        normalized_reason_code = normalize_optional_code_term(reason_code)
+        if normalized_reason_code is None:
             raise ValueError("reason_code must be non-empty string")
         return self.expire_lease(lease_id, reason_code=normalized_reason_code)
 

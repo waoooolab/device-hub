@@ -174,6 +174,69 @@ def test_preempt_lease_marks_active_lease_expired_with_preempt_reason() -> None:
     assert svc.leases[lease_id].expire_reason_code == "preempted_by_policy"
 
 
+def test_expire_lease_normalizes_reason_code_term() -> None:
+    svc = DeviceHubService()
+    svc.register_device("desktop-expire-normalize", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-expire-normalize")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-expire-normalize")
+
+    allocated = svc.allocate_placement(
+        run_id="run-expire-normalize-1",
+        task_id="task-expire-normalize-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-expire-normalize-1",
+    )
+    lease_id = allocated["lease_id"]
+
+    expired = svc.expire_lease(lease_id, reason_code="TTL.Expired")
+    assert expired["reason_code"] == "ttl_expired"
+    assert svc.leases[lease_id].expire_reason_code == "ttl_expired"
+
+
+def test_preempt_lease_normalizes_reason_code_term() -> None:
+    svc = DeviceHubService()
+    svc.register_device("desktop-preempt-normalize", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-preempt-normalize")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-preempt-normalize")
+
+    allocated = svc.allocate_placement(
+        run_id="run-preempt-normalize-1",
+        task_id="task-preempt-normalize-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-preempt-normalize-1",
+    )
+    lease_id = allocated["lease_id"]
+
+    preempted = svc.preempt_lease(lease_id, reason_code="Tool.ContractViolation")
+    assert preempted["reason_code"] == "tool_contract_violation"
+    assert svc.leases[lease_id].expire_reason_code == "tool_contract_violation"
+
+
+def test_expire_lease_rejects_empty_reason_code() -> None:
+    svc = DeviceHubService()
+    svc.register_device("desktop-expire-invalid-reason", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-expire-invalid-reason")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-expire-invalid-reason")
+
+    allocated = svc.allocate_placement(
+        run_id="run-expire-invalid-reason-1",
+        task_id="task-expire-invalid-reason-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-expire-invalid-reason-1",
+    )
+    lease_id = allocated["lease_id"]
+
+    try:
+        svc.expire_lease(lease_id, reason_code="   ")
+    except ValueError as exc:
+        assert str(exc) == "reason_code must be non-empty string"
+    else:
+        raise AssertionError("expire_lease should reject empty reason_code")
+
+
 def test_preempt_lease_rejects_empty_reason_code() -> None:
     svc = DeviceHubService()
     svc.register_device("desktop-preempt-invalid-reason", ["compute.comfyui.local"])
