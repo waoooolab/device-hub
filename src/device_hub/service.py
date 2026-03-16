@@ -447,6 +447,45 @@ class DeviceHubService:
         locality_component = 1.0 if rec and rec.execution_site == "local" and not had_fallback else 0.7
         return round(max(0.0, min(1.0, load_component * locality_component)), 6)
 
+    def _policy_selection_load(
+        self,
+        *,
+        device_id: str,
+        observed_load: int,
+        had_fallback: bool,
+    ) -> int:
+        rec = self.registry.devices.get(device_id)
+        normalized_load = max(0, observed_load)
+        locality_penalty = 0
+        if rec is not None and rec.execution_site != "local":
+            locality_penalty = 5 if had_fallback else 15
+        health_penalty = 0
+        if rec is not None and rec.status == "degraded":
+            health_penalty = 10
+        cost_penalty = 0
+        if rec is not None and rec.estimated_cost_usd is not None:
+            cost_penalty = min(int(round(float(rec.estimated_cost_usd) * 20.0)), 200)
+        return normalized_load * 100 + locality_penalty + health_penalty + cost_penalty
+
+    def _policy_load_by_device_for_allocation(
+        self,
+        *,
+        candidate_ids: list[str],
+        load_by_device: dict[str, int] | None,
+        had_fallback: bool,
+    ) -> dict[str, int]:
+        policy_load: dict[str, int] = {}
+        for device_id in candidate_ids:
+            observed = 0
+            if load_by_device and device_id in load_by_device:
+                observed = max(0, int(load_by_device.get(device_id, 0)))
+            policy_load[device_id] = self._policy_selection_load(
+                device_id=device_id,
+                observed_load=observed,
+                had_fallback=had_fallback,
+            )
+        return policy_load
+
     @staticmethod
     def _resolve_failure_domain(reason_code: str | None) -> str | None:
         normalized_reason_code = normalize_optional_code_term(reason_code)
@@ -1168,7 +1207,12 @@ class DeviceHubService:
                     reason_code="capacity_exhausted",
                 ),
             )
-        device_id = choose_device(available_ids, load_by_device=load_by_device)
+        policy_load_by_device = self._policy_load_by_device_for_allocation(
+            candidate_ids=available_ids,
+            load_by_device=load_by_device,
+            had_fallback=fallback_reason_code is not None,
+        )
+        device_id = choose_device(available_ids, load_by_device=policy_load_by_device)
         if not device_id:
             return self._rejected_placement(
                 run_id,
@@ -1190,7 +1234,7 @@ class DeviceHubService:
             queue_depth = max(0, int(load_by_device.get(device_id, 0)))
         score = self._device_selection_score(
             device_id=device_id,
-            load_by_device=load_by_device,
+            load_by_device=policy_load_by_device,
             had_fallback=fallback_reason_code is not None,
         )
         resource_snapshot = _build_allocation_resource_snapshot(

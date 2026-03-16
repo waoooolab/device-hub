@@ -1012,6 +1012,80 @@ def test_allocate_placement_prefers_local_and_falls_back_to_cloud() -> None:
     assert fallback_audit["failure_domain"] == "execution_site"
 
 
+def test_allocate_placement_policy_prefers_local_when_load_is_tied() -> None:
+    svc = DeviceHubService()
+    svc.register_device(
+        "a-cloud-lex-first",
+        ["compute.comfyui.local"],
+        execution_site="cloud",
+        region="us-west",
+        cost_tier="balanced",
+        estimated_cost_usd=0.3,
+    )
+    svc.register_device(
+        "z-local-lex-last",
+        ["compute.comfyui.local"],
+        execution_site="local",
+        region="us-west",
+        cost_tier="balanced",
+        estimated_cost_usd=0.3,
+    )
+    req_cloud = svc.request_pairing("a-cloud-lex-first")
+    req_local = svc.request_pairing("z-local-lex-last")
+    svc.approve_pairing(req_cloud.code)
+    svc.approve_pairing(req_local.code)
+    svc.receive_heartbeat("a-cloud-lex-first")
+    svc.receive_heartbeat("z-local-lex-last")
+
+    selected = svc.allocate_placement(
+        run_id="run-policy-local-1",
+        task_id="task-policy-local-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-policy-local-1",
+    )
+    assert selected["outcome"] == "lease_acquired"
+    assert selected["device_id"] == "z-local-lex-last"
+    assert selected["resource_snapshot"]["queue_depth"] == 0
+    assert selected["placement_audit"]["selected_execution_site"] == "local"
+
+
+def test_allocate_placement_policy_prefers_lower_cost_when_load_is_tied() -> None:
+    svc = DeviceHubService()
+    svc.register_device(
+        "a-expensive-lex-first",
+        ["compute.comfyui.local"],
+        execution_site="local",
+        region="us-west",
+        cost_tier="balanced",
+        estimated_cost_usd=1.0,
+    )
+    svc.register_device(
+        "z-cheap-lex-last",
+        ["compute.comfyui.local"],
+        execution_site="local",
+        region="us-west",
+        cost_tier="balanced",
+        estimated_cost_usd=0.1,
+    )
+    req_expensive = svc.request_pairing("a-expensive-lex-first")
+    req_cheap = svc.request_pairing("z-cheap-lex-last")
+    svc.approve_pairing(req_expensive.code)
+    svc.approve_pairing(req_cheap.code)
+    svc.receive_heartbeat("a-expensive-lex-first")
+    svc.receive_heartbeat("z-cheap-lex-last")
+
+    selected = svc.allocate_placement(
+        run_id="run-policy-cost-1",
+        task_id="task-policy-cost-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-policy-cost-1",
+    )
+    assert selected["outcome"] == "lease_acquired"
+    assert selected["device_id"] == "z-cheap-lex-last"
+    assert selected["resource_snapshot"]["queue_depth"] == 0
+    assert selected["placement_audit"]["selected_device_id"] == "z-cheap-lex-last"
+
+
 def test_allocate_placement_rejects_when_region_or_cost_constraints_fail() -> None:
     svc = DeviceHubService()
     svc.register_device(

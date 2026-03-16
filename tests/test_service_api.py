@@ -575,6 +575,83 @@ def test_allocate_placement_prefers_local_then_fallbacks_to_cloud_with_trace_fie
     assert second_audit["failure_domain"] == "execution_site"
 
 
+def test_allocate_placement_policy_prefers_lower_cost_device_when_load_tied() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    for payload in (
+        {
+            "device_id": "gpu-expensive-lex-first",
+            "capabilities": ["compute.comfyui.local"],
+            "execution_site": "local",
+            "region": "us-west",
+            "cost_tier": "balanced",
+            "node_pool": "gpu-main",
+            "estimated_cost_usd": 1.0,
+        },
+        {
+            "device_id": "gpu-cheap-lex-last",
+            "capabilities": ["compute.comfyui.local"],
+            "execution_site": "local",
+            "region": "us-west",
+            "cost_tier": "balanced",
+            "node_pool": "gpu-main",
+            "estimated_cost_usd": 0.1,
+        },
+    ):
+        client.post(
+            "/v1/devices/register",
+            json=_command_envelope(payload),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        pair_req = client.post(
+            "/v1/devices/pairing/request",
+            json=_command_envelope({"device_id": payload["device_id"]}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        code = pair_req.json()["payload"]["code"]
+        client.post(
+            "/v1/devices/pairing/approve",
+            json=_command_envelope({"code": code}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        client.post(
+            "/v1/devices/heartbeat",
+            json=_command_envelope({"device_id": payload["device_id"]}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    response = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-policy-cost-api-1",
+                "task_id": "task-policy-cost-api-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "region": "us-west",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    event = response.json()
+    decision = event["payload"]["decision"]
+    assert event["event_type"] == "device.lease.acquired"
+    assert decision["outcome"] == "lease_acquired"
+    assert decision["device_id"] == "gpu-cheap-lex-last"
+    assert decision["resource_snapshot"]["queue_depth"] == 0
+    assert decision["placement_audit"]["selected_device_id"] == "gpu-cheap-lex-last"
+
+
 def test_allocate_placement_returns_route_rejected_event_when_no_device() -> None:
     client = _setup_test_env()
     token = _token(["devices:write", "devices:read"])
