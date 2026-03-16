@@ -361,6 +361,95 @@ def test_renew_lease_rejects_released_or_expired_lease() -> None:
         raise AssertionError("renew_lease should reject expired lease")
 
 
+def test_lease_policy_tick_auto_renews_expiring_active_leases() -> None:
+    svc = DeviceHubService()
+    svc.register_device("desktop-policy-renew", ["compute.comfyui.local"])
+    req = svc.request_pairing("desktop-policy-renew")
+    svc.approve_pairing(req.code)
+    svc.receive_heartbeat("desktop-policy-renew")
+
+    allocated = svc.allocate_placement(
+        run_id="run-policy-renew-1",
+        task_id="task-policy-renew-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-policy-renew-1",
+    )
+    lease_id = allocated["lease_id"]
+    original_expires_at = allocated["lease_expires_at"]
+    svc.leases[lease_id].lease_expires_at = (
+        datetime.now(timezone.utc) + timedelta(seconds=5)
+    ).isoformat()
+
+    signal = svc.lease_policy_tick(
+        auto_renew_window_seconds=30,
+        auto_renew_ttl_seconds=300,
+        enforce_tenant_quota=False,
+    )
+
+    assert signal["expired_by_sweep"] == 0
+    assert signal["renew_considered"] == 1
+    assert signal["renewed"] == 1
+    assert signal["preempted"] == 0
+    assert signal["active_leases_after"] == 1
+    assert svc.leases[lease_id].status == "active"
+    assert datetime.fromisoformat(svc.leases[lease_id].lease_expires_at) > datetime.fromisoformat(
+        original_expires_at
+    )
+
+
+def test_lease_policy_tick_preempts_over_quota_tenant_leases() -> None:
+    svc = DeviceHubService()
+    svc.register_device("desktop-policy-preempt-a", ["compute.comfyui.local"])
+    svc.register_device("desktop-policy-preempt-b", ["compute.comfyui.local"])
+    req_a = svc.request_pairing("desktop-policy-preempt-a")
+    req_b = svc.request_pairing("desktop-policy-preempt-b")
+    svc.approve_pairing(req_a.code)
+    svc.approve_pairing(req_b.code)
+    svc.receive_heartbeat("desktop-policy-preempt-a")
+    svc.receive_heartbeat("desktop-policy-preempt-b")
+
+    first = svc.allocate_placement(
+        run_id="run-policy-preempt-1",
+        task_id="task-policy-preempt-1",
+        capability="compute.comfyui.local",
+        trace_id="trace-policy-preempt-1",
+        tenant_id="t1",
+    )
+    second = svc.allocate_placement(
+        run_id="run-policy-preempt-2",
+        task_id="task-policy-preempt-2",
+        capability="compute.comfyui.local",
+        trace_id="trace-policy-preempt-2",
+        tenant_id="t1",
+    )
+    assert first["outcome"] == "lease_acquired"
+    assert second["outcome"] == "lease_acquired"
+    first_lease_id = first["lease_id"]
+    second_lease_id = second["lease_id"]
+
+    # Simulate runtime limit change and enforce it via policy tick.
+    svc.max_active_leases_per_tenant = 1
+    svc.leases[first_lease_id].lease_expires_at = (datetime.now(timezone.utc) + timedelta(minutes=3)).isoformat()
+    svc.leases[second_lease_id].lease_expires_at = (datetime.now(timezone.utc) + timedelta(minutes=4)).isoformat()
+
+    signal = svc.lease_policy_tick(
+        enforce_tenant_quota=True,
+        preempt_reason_code="tenant_quota_policy",
+        max_preemptions=4,
+    )
+
+    assert signal["renewed"] == 0
+    assert signal["preempted"] == 1
+    assert signal["active_leases_before"] == 2
+    assert signal["active_leases_after"] == 1
+    assert signal["preempted_leases"][0]["tenant_id"] == "t1"
+    assert signal["preempted_leases"][0]["reason_code"] == "tenant_quota_policy"
+    preempted_lease_id = signal["preempted_leases"][0]["lease_id"]
+    assert preempted_lease_id in {first_lease_id, second_lease_id}
+    assert svc.leases[preempted_lease_id].status == "expired"
+    assert svc.leases[preempted_lease_id].expire_reason_code == "tenant_quota_policy"
+
+
 def test_allocate_placement_rejects_when_capacity_is_exhausted() -> None:
     svc = DeviceHubService()
     svc.register_device("desktop-capacity", ["compute.comfyui.local"])

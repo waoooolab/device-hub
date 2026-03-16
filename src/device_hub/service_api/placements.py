@@ -412,3 +412,42 @@ def renew_placement_response(
     )
     _validate_route_event(event, error_message="invalid lease renew event")
     return finalize_event(event)
+
+
+def lease_policy_tick_response(
+    *,
+    envelope: dict[str, Any],
+    claims: dict[str, Any],
+    hub: DeviceHubService,
+) -> dict[str, Any]:
+    validate_write(envelope, claims)
+    payload = extract_payload(envelope, required_fields=[])
+
+    enforce_tenant_quota = payload.get("enforce_tenant_quota", True)
+    auto_renew_window_seconds = payload.get("auto_renew_window_seconds", 0)
+    auto_renew_ttl_seconds = payload.get("auto_renew_ttl_seconds", 300)
+    preempt_reason_code = payload.get("preempt_reason_code", "preempted_by_policy")
+    max_preemptions = payload.get("max_preemptions", 256)
+
+    if not isinstance(enforce_tenant_quota, bool):
+        raise HTTPException(status_code=422, detail="payload.enforce_tenant_quota must be boolean")
+    if not isinstance(preempt_reason_code, str):
+        raise HTTPException(status_code=422, detail="payload.preempt_reason_code must be string")
+
+    try:
+        policy_signal = hub.lease_policy_tick(
+            auto_renew_window_seconds=auto_renew_window_seconds,
+            auto_renew_ttl_seconds=auto_renew_ttl_seconds,
+            enforce_tenant_quota=enforce_tenant_quota,
+            preempt_reason_code=preempt_reason_code,
+            max_preemptions=max_preemptions,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    event = build_event(
+        envelope,
+        event_type="device.lease.policy.ticked",
+        payload=policy_signal,
+    )
+    return finalize_event(event)

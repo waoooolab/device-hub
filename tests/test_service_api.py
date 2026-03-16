@@ -3092,6 +3092,129 @@ def test_release_placement_returns_404_for_unknown_lease() -> None:
     assert response.status_code == 404
 
 
+def test_lease_policy_tick_preempts_tenant_overflow_and_emits_event() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    for device_id in ("gpu-node-policy-tick-a", "gpu-node-policy-tick-b"):
+        _ = client.post(
+            "/v1/devices/register",
+            json=_command_envelope(
+                {"device_id": device_id, "capabilities": ["compute.comfyui.local"]}
+            ),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        pair_req = client.post(
+            "/v1/devices/pairing/request",
+            json=_command_envelope({"device_id": device_id}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        code = pair_req.json()["payload"]["code"]
+        _ = client.post(
+            "/v1/devices/pairing/approve",
+            json=_command_envelope({"code": code}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        _ = client.post(
+            "/v1/devices/heartbeat",
+            json=_command_envelope({"device_id": device_id}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    first = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-policy-tick-1",
+                "task_id": "task-policy-tick-1",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    second = client.post(
+        "/v1/placements/allocate",
+        json=_command_envelope(
+            {
+                "run_id": "run-policy-tick-2",
+                "task_id": "task-policy-tick-2",
+                "execution_profile": {
+                    "execution_mode": "compute",
+                    "inference_target": "none",
+                    "resource_class": "gpu",
+                    "placement_constraints": {
+                        "tenant_id": "t1",
+                        "required_capabilities": ["compute.comfyui.local"],
+                    },
+                },
+            },
+            command_type="device.placement.allocate",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    first_lease_id = first.json()["payload"]["decision"]["lease_id"]
+    second_lease_id = second.json()["payload"]["decision"]["lease_id"]
+    assert first_lease_id != second_lease_id
+
+    app_module._hub.max_active_leases_per_tenant = 1
+
+    tick = client.post(
+        "/v1/placements/leases/policy/tick",
+        json=_command_envelope(
+            {
+                "enforce_tenant_quota": True,
+                "preempt_reason_code": "tenant_quota_policy",
+                "max_preemptions": 4,
+            },
+            command_type="device.placement.policy.tick",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert tick.status_code == 200
+    event = tick.json()
+    assert event["event_type"] == "device.lease.policy.ticked"
+    payload = event["payload"]
+    assert payload["preempted"] == 1
+    assert payload["active_leases_before"] == 2
+    assert payload["active_leases_after"] == 1
+    assert payload["preempted_leases"][0]["tenant_id"] == "t1"
+    assert payload["preempted_leases"][0]["reason_code"] == "tenant_quota_policy"
+    preempted_lease_id = payload["preempted_leases"][0]["lease_id"]
+    assert preempted_lease_id in {first_lease_id, second_lease_id}
+    assert app_module._hub.leases[preempted_lease_id].status == "expired"
+    assert app_module._hub.leases[preempted_lease_id].expire_reason_code == "tenant_quota_policy"
+
+
+def test_lease_policy_tick_rejects_invalid_payload_types() -> None:
+    client = _setup_test_env()
+    token = _token(["devices:write", "devices:read"])
+
+    response = client.post(
+        "/v1/placements/leases/policy/tick",
+        json=_command_envelope(
+            {
+                "enforce_tenant_quota": "true",
+                "max_preemptions": -1,
+            },
+            command_type="device.placement.policy.tick",
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+    assert "enforce_tenant_quota must be boolean" in response.text
+
+
 def test_get_device_requires_read_scope() -> None:
     client = _setup_test_env()
     write_token = _token(["devices:write"])

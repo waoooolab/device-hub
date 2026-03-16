@@ -20,6 +20,7 @@ from .contracts import (
 from .placements import (
     allocate_placement_response,
     expire_placement_response,
+    lease_policy_tick_response,
     preempt_placement_response,
     renew_placement_response,
     release_placement_response,
@@ -337,6 +338,16 @@ def renew_placement(
     ),
 ) -> dict[str, Any]:
     return renew_placement_response(envelope=envelope, claims=claims, hub=_hub)
+
+
+@app.post("/v1/placements/leases/policy/tick")
+def lease_policy_tick(
+    envelope: dict[str, Any],
+    claims: dict[str, Any] = Depends(
+        require_claims(audience=SERVICE_AUDIENCE, required_scope=DEVICES_WRITE_SCOPE)
+    ),
+) -> dict[str, Any]:
+    return lease_policy_tick_response(envelope=envelope, claims=claims, hub=_hub)
 
 
 @app.get("/v1/placements/capacity")

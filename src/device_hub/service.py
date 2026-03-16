@@ -42,6 +42,10 @@ class DeviceHubService:
     lease_expired_total: int = 0
     lease_expire_last_sweep_at: str | None = None
     lease_expire_last_sweep_expired: int = 0
+    lease_policy_ticks_total: int = 0
+    lease_policy_last_tick_at: str | None = None
+    lease_policy_last_preempted: int = 0
+    lease_policy_last_renewed: int = 0
     active_lease_index_by_run_task: dict[tuple[str, str], str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -805,6 +809,12 @@ class DeviceHubService:
             "lease_expired_total": self.lease_expired_total,
             "lease_expire_last_sweep_at": self.lease_expire_last_sweep_at,
             "lease_expire_last_sweep_expired": self.lease_expire_last_sweep_expired,
+            "lease_policy": {
+                "ticks_total": self.lease_policy_ticks_total,
+                "last_tick_at": self.lease_policy_last_tick_at,
+                "last_preempted": self.lease_policy_last_preempted,
+                "last_renewed": self.lease_policy_last_renewed,
+            },
             "tenant_quota": {
                 "enabled": (
                     default_tenant_limit is not None or len(self.tenant_active_lease_limits) > 0
@@ -1316,6 +1326,127 @@ class DeviceHubService:
             "device_id": lease.device_id,
             "lease_id": lease.lease_id,
             "lease_expires_at": lease.lease_expires_at,
+        }
+
+    def lease_policy_tick(
+        self,
+        *,
+        auto_renew_window_seconds: int = 0,
+        auto_renew_ttl_seconds: int = 300,
+        enforce_tenant_quota: bool = True,
+        preempt_reason_code: str = "preempted_by_policy",
+        max_preemptions: int = 256,
+    ) -> dict[str, Any]:
+        if (
+            not isinstance(auto_renew_window_seconds, int)
+            or isinstance(auto_renew_window_seconds, bool)
+            or auto_renew_window_seconds < 0
+            or auto_renew_window_seconds > 3600
+        ):
+            raise ValueError("auto_renew_window_seconds must be integer in [0, 3600]")
+        if (
+            not isinstance(auto_renew_ttl_seconds, int)
+            or isinstance(auto_renew_ttl_seconds, bool)
+            or auto_renew_ttl_seconds < 30
+            or auto_renew_ttl_seconds > 3600
+        ):
+            raise ValueError("auto_renew_ttl_seconds must be integer in [30, 3600]")
+        if (
+            not isinstance(max_preemptions, int)
+            or isinstance(max_preemptions, bool)
+            or max_preemptions < 0
+            or max_preemptions > 1024
+        ):
+            raise ValueError("max_preemptions must be integer in [0, 1024]")
+        normalized_preempt_reason = normalize_optional_code_term(preempt_reason_code)
+        if normalized_preempt_reason is None:
+            raise ValueError("preempt_reason_code must be non-empty string")
+
+        active_leases_before = sum(1 for lease in self.leases.values() if lease.status == "active")
+        expired_by_sweep = self._expire_due_leases()
+
+        renew_considered = 0
+        renewed = 0
+        if auto_renew_window_seconds > 0:
+            renew_cutoff = datetime.now(timezone.utc) + timedelta(seconds=auto_renew_window_seconds)
+            for lease in self.leases.values():
+                if lease.status != "active":
+                    continue
+                expires_at = self._parse_iso_datetime(lease.lease_expires_at)
+                if expires_at is None or expires_at > renew_cutoff:
+                    continue
+                renew_considered += 1
+                lease.lease_expires_at = self._lease_expiry(auto_renew_ttl_seconds)
+                renewed += 1
+
+        preempted_leases: list[dict[str, Any]] = []
+        if enforce_tenant_quota and max_preemptions > 0:
+            preemption_budget = max_preemptions
+            tenant_counts = self._active_lease_counts_by_tenant()
+            for tenant_id in sorted(tenant_counts):
+                if preemption_budget <= 0:
+                    break
+                tenant_limit = self._resolve_tenant_active_lease_limit(tenant_id)
+                if tenant_limit is None:
+                    continue
+                active_count = tenant_counts.get(tenant_id, 0)
+                if active_count <= tenant_limit:
+                    continue
+                overflow = min(active_count - tenant_limit, preemption_budget)
+                tenant_leases = [
+                    lease
+                    for lease in self.leases.values()
+                    if lease.status == "active" and lease.tenant_id == tenant_id
+                ]
+                tenant_leases.sort(
+                    key=lambda lease: (
+                        self._parse_iso_datetime(lease.lease_expires_at) or datetime.max.replace(tzinfo=timezone.utc),
+                        lease.lease_id,
+                    )
+                )
+                for lease in tenant_leases[:overflow]:
+                    self._unindex_active_lease(lease)
+                    lease.status = "expired"
+                    lease.expired_at = datetime.now(timezone.utc).isoformat()
+                    lease.expire_reason_code = normalized_preempt_reason
+                    if lease.device_id in self.registry.devices:
+                        self.registry.heartbeat(lease.device_id)
+                    preempted_leases.append(
+                        {
+                            "tenant_id": tenant_id,
+                            "run_id": lease.run_id,
+                            "task_id": lease.task_id,
+                            "device_id": lease.device_id,
+                            "lease_id": lease.lease_id,
+                            "reason_code": normalized_preempt_reason,
+                        }
+                    )
+                    preemption_budget -= 1
+                    if preemption_budget <= 0:
+                        break
+
+        active_leases_after = sum(1 for lease in self.leases.values() if lease.status == "active")
+        self.lease_policy_ticks_total += 1
+        self.lease_policy_last_tick_at = datetime.now(timezone.utc).isoformat()
+        self.lease_policy_last_preempted = len(preempted_leases)
+        self.lease_policy_last_renewed = renewed
+
+        return {
+            "expired_by_sweep": expired_by_sweep,
+            "auto_renew_window_seconds": auto_renew_window_seconds,
+            "auto_renew_ttl_seconds": auto_renew_ttl_seconds,
+            "renew_considered": renew_considered,
+            "renewed": renewed,
+            "enforce_tenant_quota": enforce_tenant_quota,
+            "preempt_reason_code": normalized_preempt_reason,
+            "max_preemptions": max_preemptions,
+            "preempted": len(preempted_leases),
+            "preempted_leases": preempted_leases,
+            "active_leases_before": active_leases_before,
+            "active_leases_after": active_leases_after,
+            "tenant_active_counts_after": self._active_lease_counts_by_tenant(),
+            "policy_ticks_total": self.lease_policy_ticks_total,
+            "policy_last_tick_at": self.lease_policy_last_tick_at,
         }
 
     def get_lease_snapshot(self, lease_id: str) -> dict[str, Any]:
