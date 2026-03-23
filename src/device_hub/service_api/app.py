@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException
 
+from device_hub.persistence_paths import resolve_device_state_db_path
 from device_hub.service import DeviceHubService
 
 from .auth import require_claims
@@ -85,9 +86,11 @@ def _tenant_active_lease_limits_from_env() -> dict[str, int]:
 
 
 app = FastAPI(title="device-hub", version="0.1.0")
+_device_state_db_path = resolve_device_state_db_path()
 _hub = DeviceHubService(
     max_active_leases_per_tenant=_max_active_leases_per_tenant_from_env(),
     tenant_active_lease_limits=_tenant_active_lease_limits_from_env(),
+    persistence_db_path=_device_state_db_path.as_posix() if _device_state_db_path is not None else None,
 )
 
 

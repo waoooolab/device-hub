@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
@@ -12,6 +12,7 @@ from .devices.pairing import PairingManager, PairingRequest
 from .devices.registry import DeviceRecord, DeviceRegistry
 from .resources.capability_registry import CapabilityRegistry
 from .routing.device_router import choose_device
+from .state_store import DeviceHubStateStore
 
 
 @dataclass
@@ -47,6 +48,8 @@ class DeviceHubService:
     lease_policy_last_preempted: int = 0
     lease_policy_last_renewed: int = 0
     active_lease_index_by_run_task: dict[tuple[str, str], str] = field(default_factory=dict)
+    persistence_db_path: str | None = None
+    _state_store: DeviceHubStateStore | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.max_active_leases_per_tenant is not None:
@@ -59,6 +62,213 @@ class DeviceHubService:
         self.tenant_active_lease_limits = _normalize_tenant_active_lease_limits(
             self.tenant_active_lease_limits
         )
+        if isinstance(self.persistence_db_path, str):
+            normalized_path = self.persistence_db_path.strip()
+            self.persistence_db_path = normalized_path or None
+        if self.persistence_db_path is not None:
+            self._state_store = DeviceHubStateStore(self.persistence_db_path)
+            self._restore_persisted_state()
+
+    @staticmethod
+    def _as_nonnegative_int(value: Any) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            return 0
+        return max(0, value)
+
+    @staticmethod
+    def _normalize_optional_str(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @staticmethod
+    def _restore_device_record(value: Any) -> DeviceRecord | None:
+        if not isinstance(value, dict):
+            return None
+        device_id = DeviceHubService._normalize_optional_str(value.get("device_id"))
+        if device_id is None:
+            return None
+        raw_capabilities = value.get("capabilities")
+        if not isinstance(raw_capabilities, list):
+            return None
+        capabilities = [
+            capability.strip()
+            for capability in raw_capabilities
+            if isinstance(capability, str) and capability.strip()
+        ]
+        execution_site = DeviceHubService._normalize_optional_str(value.get("execution_site")) or "local"
+        if execution_site not in {"local", "cloud"}:
+            execution_site = "local"
+        cost_tier = DeviceHubService._normalize_optional_str(value.get("cost_tier")) or "balanced"
+        if cost_tier not in {"low", "balanced", "high"}:
+            cost_tier = "balanced"
+        estimated_cost_usd_raw = value.get("estimated_cost_usd")
+        estimated_cost_usd = None
+        if (
+            isinstance(estimated_cost_usd_raw, (int, float))
+            and not isinstance(estimated_cost_usd_raw, bool)
+            and float(estimated_cost_usd_raw) >= 0
+        ):
+            estimated_cost_usd = float(estimated_cost_usd_raw)
+        status = DeviceHubService._normalize_optional_str(value.get("status")) or "offline"
+        paired = value.get("paired") is True
+        last_seen_at = DeviceHubService._normalize_optional_str(value.get("last_seen_at"))
+        if last_seen_at is None:
+            last_seen_at = datetime.now(timezone.utc).isoformat()
+        region = DeviceHubService._normalize_optional_str(value.get("region"))
+        node_pool = DeviceHubService._normalize_optional_str(value.get("node_pool"))
+        return DeviceRecord(
+            device_id=device_id,
+            capabilities=capabilities,
+            execution_site=execution_site,
+            region=region,
+            cost_tier=cost_tier,
+            node_pool=node_pool,
+            estimated_cost_usd=estimated_cost_usd,
+            status=status,
+            paired=paired,
+            last_seen_at=last_seen_at,
+        )
+
+    @staticmethod
+    def _restore_pairing_request(value: Any) -> PairingRequest | None:
+        if not isinstance(value, dict):
+            return None
+        code = DeviceHubService._normalize_optional_str(value.get("code"))
+        device_id = DeviceHubService._normalize_optional_str(value.get("device_id"))
+        expires_at = DeviceHubService._normalize_optional_str(value.get("expires_at"))
+        if code is None or device_id is None or expires_at is None:
+            return None
+        return PairingRequest(code=code, device_id=device_id, expires_at=expires_at)
+
+    @staticmethod
+    def _restore_lease_record(value: Any) -> LeaseRecord | None:
+        if not isinstance(value, dict):
+            return None
+        lease_id = DeviceHubService._normalize_optional_str(value.get("lease_id"))
+        run_id = DeviceHubService._normalize_optional_str(value.get("run_id"))
+        task_id = DeviceHubService._normalize_optional_str(value.get("task_id"))
+        device_id = DeviceHubService._normalize_optional_str(value.get("device_id"))
+        capability = DeviceHubService._normalize_optional_str(value.get("capability"))
+        trace_id = DeviceHubService._normalize_optional_str(value.get("trace_id"))
+        lease_expires_at = DeviceHubService._normalize_optional_str(value.get("lease_expires_at"))
+        if None in {lease_id, run_id, task_id, device_id, capability, trace_id, lease_expires_at}:
+            return None
+        status = DeviceHubService._normalize_optional_str(value.get("status")) or "active"
+        if status not in {"active", "released", "expired"}:
+            status = "active"
+        tenant_id = DeviceHubService._normalize_optional_str(value.get("tenant_id"))
+        released_at = DeviceHubService._normalize_optional_str(value.get("released_at"))
+        expired_at = DeviceHubService._normalize_optional_str(value.get("expired_at"))
+        expire_reason_code = normalize_optional_code_term(value.get("expire_reason_code"))
+        return LeaseRecord(
+            lease_id=lease_id,
+            run_id=run_id,
+            task_id=task_id,
+            device_id=device_id,
+            capability=capability,
+            trace_id=trace_id,
+            lease_expires_at=lease_expires_at,
+            tenant_id=tenant_id,
+            status=status,
+            released_at=released_at,
+            expired_at=expired_at,
+            expire_reason_code=expire_reason_code,
+        )
+
+    def _rebuild_capability_registry(self) -> None:
+        self.capabilities = CapabilityRegistry()
+        for record in self.registry.devices.values():
+            for capability in record.capabilities:
+                if isinstance(capability, str) and capability.strip():
+                    self.capabilities.bind(record.device_id, capability.strip())
+
+    def _rebuild_active_lease_index(self) -> None:
+        self.active_lease_index_by_run_task = {}
+        for lease in self.leases.values():
+            self._index_active_lease(lease)
+
+    def _restore_persisted_state(self) -> None:
+        if self._state_store is None:
+            return
+        snapshot = self._state_store.load_snapshot()
+        if not isinstance(snapshot, dict):
+            return
+        devices: dict[str, DeviceRecord] = {}
+        for item in snapshot.get("devices", []):
+            record = self._restore_device_record(item)
+            if record is None:
+                continue
+            devices[record.device_id] = record
+        self.registry = DeviceRegistry(devices=devices)
+        self._rebuild_capability_registry()
+
+        pairings: dict[str, PairingRequest] = {}
+        for item in snapshot.get("pairings", []):
+            request = self._restore_pairing_request(item)
+            if request is None:
+                continue
+            if request.device_id not in self.registry.devices:
+                continue
+            pairings[request.code] = request
+        self.pairing = PairingManager(by_code=pairings)
+
+        leases: dict[str, LeaseRecord] = {}
+        for item in snapshot.get("leases", []):
+            lease = self._restore_lease_record(item)
+            if lease is None:
+                continue
+            if lease.device_id not in self.registry.devices:
+                continue
+            leases[lease.lease_id] = lease
+        self.leases = leases
+        self._rebuild_active_lease_index()
+        for lease in self.leases.values():
+            if lease.status == "active" and lease.device_id in self.registry.devices:
+                self.registry.mark_busy(lease.device_id)
+
+        self.lease_expire_sweeps_total = self._as_nonnegative_int(
+            snapshot.get("lease_expire_sweeps_total")
+        )
+        self.lease_expired_total = self._as_nonnegative_int(snapshot.get("lease_expired_total"))
+        self.lease_expire_last_sweep_at = self._normalize_optional_str(
+            snapshot.get("lease_expire_last_sweep_at")
+        )
+        self.lease_expire_last_sweep_expired = self._as_nonnegative_int(
+            snapshot.get("lease_expire_last_sweep_expired")
+        )
+        self.lease_policy_ticks_total = self._as_nonnegative_int(snapshot.get("lease_policy_ticks_total"))
+        self.lease_policy_last_tick_at = self._normalize_optional_str(
+            snapshot.get("lease_policy_last_tick_at")
+        )
+        self.lease_policy_last_preempted = self._as_nonnegative_int(
+            snapshot.get("lease_policy_last_preempted")
+        )
+        self.lease_policy_last_renewed = self._as_nonnegative_int(
+            snapshot.get("lease_policy_last_renewed")
+        )
+
+    def _state_snapshot_payload(self) -> dict[str, Any]:
+        return {
+            "version": 1,
+            "devices": [asdict(record) for record in self.registry.devices.values()],
+            "pairings": [asdict(request) for request in self.pairing.by_code.values()],
+            "leases": [asdict(lease) for lease in self.leases.values()],
+            "lease_expire_sweeps_total": self.lease_expire_sweeps_total,
+            "lease_expired_total": self.lease_expired_total,
+            "lease_expire_last_sweep_at": self.lease_expire_last_sweep_at,
+            "lease_expire_last_sweep_expired": self.lease_expire_last_sweep_expired,
+            "lease_policy_ticks_total": self.lease_policy_ticks_total,
+            "lease_policy_last_tick_at": self.lease_policy_last_tick_at,
+            "lease_policy_last_preempted": self.lease_policy_last_preempted,
+            "lease_policy_last_renewed": self.lease_policy_last_renewed,
+        }
+
+    def _persist_state_snapshot(self) -> None:
+        if self._state_store is None:
+            return
+        self._state_store.save_snapshot(self._state_snapshot_payload())
 
     @staticmethod
     def _rejected_placement(
@@ -201,6 +411,7 @@ class DeviceHubService:
             tenant_id=tenant_id,
         )
         self._index_active_lease(self.leases[lease_id])
+        self._persist_state_snapshot()
         decision: dict[str, Any] = {
             "run_id": run_id,
             "task_id": task_id,
@@ -246,23 +457,32 @@ class DeviceHubService:
         )
         for capability in capabilities:
             self.capabilities.bind(device_id, capability)
+        self._persist_state_snapshot()
         return rec
 
     def request_pairing(self, device_id: str, ttl_seconds: int = 300) -> PairingRequest:
         if device_id not in self.registry.devices:
             raise ValueError("device not registered")
-        return self.pairing.create_request(device_id=device_id, ttl_seconds=ttl_seconds)
+        request = self.pairing.create_request(device_id=device_id, ttl_seconds=ttl_seconds)
+        self._persist_state_snapshot()
+        return request
 
     def approve_pairing(self, code: str) -> DeviceRecord:
         device_id = self.pairing.approve(code)
-        return self.registry.approve_pairing(device_id)
+        record = self.registry.approve_pairing(device_id)
+        self._persist_state_snapshot()
+        return record
 
     def receive_heartbeat(self, device_id: str) -> DeviceRecord:
-        return self.registry.heartbeat(device_id)
+        record = self.registry.heartbeat(device_id)
+        self._persist_state_snapshot()
+        return record
 
     def revoke_device(self, device_id: str) -> DeviceRecord:
         self.capabilities.unbind_device(device_id)
-        return self.registry.revoke(device_id)
+        record = self.registry.revoke(device_id)
+        self._persist_state_snapshot()
+        return record
 
     def route_capability(
         self, capability: str, load_by_device: dict[str, int] | None = None
@@ -686,6 +906,7 @@ class DeviceHubService:
         self.lease_expire_last_sweep_expired = expired_count
         if expired_count > 0:
             self.lease_expired_total += expired_count
+            self._persist_state_snapshot()
         return expired_count
 
     def route_command(
@@ -1272,6 +1493,7 @@ class DeviceHubService:
             raise KeyError(f"lease not found: {lease_id}")
         if lease.status == "released":
             self._unindex_active_lease(lease)
+            self._persist_state_snapshot()
             return {
                 "run_id": lease.run_id,
                 "task_id": lease.task_id,
@@ -1281,6 +1503,7 @@ class DeviceHubService:
             }
         if lease.status == "expired":
             self._unindex_active_lease(lease)
+            self._persist_state_snapshot()
             raise ValueError("lease already expired")
 
         self._unindex_active_lease(lease)
@@ -1288,6 +1511,7 @@ class DeviceHubService:
         lease.released_at = datetime.now(timezone.utc).isoformat()
         if lease.device_id in self.registry.devices:
             self.registry.heartbeat(lease.device_id)
+        self._persist_state_snapshot()
         return {
             "run_id": lease.run_id,
             "task_id": lease.task_id,
@@ -1306,10 +1530,12 @@ class DeviceHubService:
             raise KeyError(f"lease not found: {lease_id}")
         if lease.status == "released":
             self._unindex_active_lease(lease)
+            self._persist_state_snapshot()
             raise ValueError("lease already released")
         if lease.status == "expired":
             self._unindex_active_lease(lease)
             existing_reason_code = normalize_optional_code_term(lease.expire_reason_code)
+            self._persist_state_snapshot()
             return {
                 "run_id": lease.run_id,
                 "task_id": lease.task_id,
@@ -1325,6 +1551,7 @@ class DeviceHubService:
         lease.expire_reason_code = normalized_reason_code
         if lease.device_id in self.registry.devices:
             self.registry.heartbeat(lease.device_id)
+        self._persist_state_snapshot()
         return {
             "run_id": lease.run_id,
             "task_id": lease.task_id,
@@ -1363,6 +1590,7 @@ class DeviceHubService:
             raise ValueError("lease already expired")
 
         lease.lease_expires_at = self._lease_expiry(lease_ttl_seconds)
+        self._persist_state_snapshot()
         return {
             "run_id": lease.run_id,
             "task_id": lease.task_id,
@@ -1474,6 +1702,7 @@ class DeviceHubService:
         self.lease_policy_last_tick_at = datetime.now(timezone.utc).isoformat()
         self.lease_policy_last_preempted = len(preempted_leases)
         self.lease_policy_last_renewed = renewed
+        self._persist_state_snapshot()
 
         return {
             "expired_by_sweep": expired_by_sweep,
