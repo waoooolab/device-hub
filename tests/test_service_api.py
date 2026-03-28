@@ -40,8 +40,8 @@ def _command_envelope(payload: dict, command_type: str = "device.command") -> di
         "command_id": f"cmd-{uuid4()}",
         "command_type": command_type,
         "tenant_id": "t1",
-        "app_id": "waoooo",
-        "session_key": "tenant:t1:app:waoooo:channel:web:actor:u1:thread:main:agent:pm",
+        "app_id": "demo-app",
+        "session_key": "tenant:t1:app:demo-app:channel:web:actor:u1:thread:main:agent:pm",
         "trace_id": "trace-device-1",
         "idempotency_key": "idem-device-1234",
         "retry_policy": {
@@ -61,11 +61,11 @@ def _token(scope: list[str], audience: str = "device-hub") -> str:
             "sub": "svc:runtime-gateway",
             "aud": audience,
             "tenant_id": "t1",
-            "app_id": "waoooo",
+            "app_id": "demo-app",
             "scope": scope,
             "token_use": "service",
             "trace_id": "trace-device-1",
-            "session_key": "tenant:t1:app:waoooo:channel:web:actor:u1:thread:main:agent:pm",
+            "session_key": "tenant:t1:app:demo-app:channel:web:actor:u1:thread:main:agent:pm",
         }
     )
 
@@ -130,10 +130,10 @@ def test_register_rejects_missing_token_use_claim() -> None:
             "sub": "svc:runtime-gateway",
             "aud": "device-hub",
             "tenant_id": "t1",
-            "app_id": "waoooo",
+            "app_id": "demo-app",
             "scope": ["devices:write"],
             "trace_id": "trace-device-1",
-            "session_key": "tenant:t1:app:waoooo:channel:web:actor:u1:thread:main:agent:pm",
+            "session_key": "tenant:t1:app:demo-app:channel:web:actor:u1:thread:main:agent:pm",
         }
     )
     response = client.post(
@@ -153,11 +153,11 @@ def test_register_rejects_unsupported_token_use_claim() -> None:
             "sub": "svc:runtime-gateway",
             "aud": "device-hub",
             "tenant_id": "t1",
-            "app_id": "waoooo",
+            "app_id": "demo-app",
             "scope": ["devices:write"],
             "token_use": "exchange",
             "trace_id": "trace-device-1",
-            "session_key": "tenant:t1:app:waoooo:channel:web:actor:u1:thread:main:agent:pm",
+            "session_key": "tenant:t1:app:demo-app:channel:web:actor:u1:thread:main:agent:pm",
         }
     )
     response = client.post(
