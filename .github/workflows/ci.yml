@@ -14,3 +14,23 @@ jobs:
         python -m pip install -e .
       test_command: |
         python scripts/run_tests.py
+
+  governance-guards:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install governance guard deps
+        run: pip install pyyaml
+      - name: Run V3 governance guards (mvp)
+        run: |
+          python scripts/governance/guards/check_governance_guard.py --guard-id guard.docs.lifecycle-header-state-lint
+          python scripts/governance/guards/check_governance_guard.py --guard-id guard.docs.one-active-authority-per-domain
+          python scripts/governance/guards/check_governance_guard.py --guard-id guard.docs.report-file-naming
+          python scripts/governance/guards/check_governance_guard.py --guard-id guard.registry.sync
