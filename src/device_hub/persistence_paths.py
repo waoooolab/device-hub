@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from functools import lru_cache
 import json
-import os
 from pathlib import Path
 
-_PLATFORM_CONTRACTS_DIR_ENV = "OWA_PLATFORM_CONTRACTS_DIR"
-_PLATFORM_CONTRACTS_DIR_ENV_LEGACY = "WAOOOOLAB_PLATFORM_CONTRACTS_DIR"
+from .contracts_catalog_runtime import normalized_env, resolve_catalog_data_path
+
 _PERSISTENCE_PATHS_DATA_PATH = "catalog/runtime/persistence-paths.data.v1.json"
 _SERVICE_KEY = "device-hub"
 
@@ -21,30 +20,11 @@ _DEFAULT_PATHS: dict[str, tuple[str, str]] = {
 }
 
 
-def _normalized_env(name: str) -> str | None:
-    raw = os.environ.get(name)
-    if raw is None:
-        return None
-    value = raw.strip()
-    return value or None
-
-
-def _contracts_root() -> Path:
-    configured = os.environ.get(_PLATFORM_CONTRACTS_DIR_ENV)
-    if configured is None:
-        configured = os.environ.get(_PLATFORM_CONTRACTS_DIR_ENV_LEGACY)
-    if configured:
-        return Path(configured).expanduser().resolve()
-    return Path(__file__).resolve().parents[3] / "platform-contracts"
-
-
 def _catalog_data_path() -> Path:
-    root = _contracts_root()
-    if (root / "jsonschema").exists():
-        return root / _PERSISTENCE_PATHS_DATA_PATH
-    if root.name == "jsonschema":
-        return root.parent / _PERSISTENCE_PATHS_DATA_PATH
-    return root / _PERSISTENCE_PATHS_DATA_PATH
+    return resolve_catalog_data_path(
+        anchor_file=__file__,
+        relative_path=_PERSISTENCE_PATHS_DATA_PATH,
+    )
 
 
 @lru_cache(maxsize=1)
@@ -100,7 +80,7 @@ def _path_config(path_key: str) -> tuple[str, str]:
 
 
 def _persist_root() -> Path | None:
-    raw = _normalized_env(_persist_root_env_name())
+    raw = normalized_env(_persist_root_env_name())
     if raw is None:
         return None
     return Path(raw).expanduser()
@@ -108,7 +88,7 @@ def _persist_root() -> Path | None:
 
 def resolve_device_state_db_path() -> Path | None:
     explicit_env, relative_path = _path_config("device_state_db")
-    explicit = _normalized_env(explicit_env)
+    explicit = normalized_env(explicit_env)
     if explicit is not None:
         return Path(explicit).expanduser()
     root = _persist_root()
