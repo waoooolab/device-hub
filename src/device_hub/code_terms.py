@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 import json
-import os
+from .contracts_catalog_runtime import resolve_catalog_data_path
 from pathlib import Path
 import re
 from typing import Any
@@ -15,27 +15,13 @@ _DEFAULT_POLICY = {
     "non_alnum_pattern": r"[^A-Za-z0-9]+",
     "multi_underscore_pattern": r"_+",
 }
-_PLATFORM_CONTRACTS_DIR_ENV = "OWA_PLATFORM_CONTRACTS_DIR"
-_PLATFORM_CONTRACTS_DIR_ENV_LEGACY = "WAOOOOLAB_PLATFORM_CONTRACTS_DIR"
 _CODE_TERMS_POLICY_DATA_PATH = "catalog/runtime/code-terms.data.v1.json"
 
-
-def _contracts_root() -> Path:
-    configured = os.environ.get(_PLATFORM_CONTRACTS_DIR_ENV)
-    if configured is None:
-        configured = os.environ.get(_PLATFORM_CONTRACTS_DIR_ENV_LEGACY)
-    if configured:
-        return Path(configured).expanduser().resolve()
-    return Path(__file__).resolve().parents[3] / "platform-contracts"
-
-
 def _policy_data_path() -> Path:
-    root = _contracts_root()
-    if (root / "jsonschema").exists():
-        return root / _CODE_TERMS_POLICY_DATA_PATH
-    if root.name == "jsonschema":
-        return root.parent / _CODE_TERMS_POLICY_DATA_PATH
-    return root / _CODE_TERMS_POLICY_DATA_PATH
+    return resolve_catalog_data_path(
+        anchor_file=__file__,
+        relative_path=_CODE_TERMS_POLICY_DATA_PATH,
+    )
 
 
 @lru_cache(maxsize=1)
