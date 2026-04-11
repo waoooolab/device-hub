@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from device_hub.service import DeviceHubService
 
 app_module = importlib.import_module("device_hub.service_api.app")
+auth_module = importlib.import_module("device_hub.service_api.auth")
 
 
 def _b64url_encode(raw: bytes) -> str:
@@ -167,6 +168,55 @@ def test_register_rejects_unsupported_token_use_claim() -> None:
     )
     assert response.status_code == 401
     assert "unsupported token_use" in response.json()["detail"]
+
+
+def test_auth_dependency_accepts_control_gateway_issuer(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "DEVICE_HUB_ALLOWED_TOKEN_ISSUERS",
+        "runtime-gateway,control-gateway",
+    )
+    dependency = auth_module.require_claims(
+        audience="device-hub",
+        required_scope="devices:write",
+    )
+    issued = _issue_token(
+        {
+            "iss": "control-gateway",
+            "sub": "svc:control-gateway",
+            "aud": "device-hub",
+            "tenant_id": "t1",
+            "app_id": "demo-app",
+            "scope": ["devices:write"],
+            "token_use": "service",
+            "trace_id": "trace-device-1",
+        }
+    )
+    claims = dependency(authorization=f"Bearer {issued}")
+    assert claims["iss"] == "control-gateway"
+
+
+def test_register_rejects_unsupported_issuer() -> None:
+    client = _setup_test_env()
+    issued = _issue_token(
+        {
+            "iss": "random-gateway",
+            "sub": "svc:runtime-gateway",
+            "aud": "device-hub",
+            "tenant_id": "t1",
+            "app_id": "demo-app",
+            "scope": ["devices:write"],
+            "token_use": "service",
+            "trace_id": "trace-device-1",
+            "session_key": "tenant:t1:app:demo-app:channel:web:actor:u1:thread:main:agent:pm",
+        }
+    )
+    response = client.post(
+        "/v1/devices/register",
+        json=_command_envelope({"device_id": "d1", "capabilities": ["compute.comfyui.local"]}),
+        headers={"Authorization": f"Bearer {issued}"},
+    )
+    assert response.status_code == 401
+    assert "unsupported issuer" in response.json()["detail"]
 
 
 def test_register_rejects_default_secret_in_strict_mode(monkeypatch) -> None:

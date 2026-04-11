@@ -19,6 +19,7 @@ class TokenError(ValueError):
 
 _DEFAULT_TOKEN_SECRET = "dev-insecure-secret"
 _ALLOWED_TOKEN_USES = {"access", "service", "device"}
+_DEFAULT_ALLOWED_TOKEN_ISSUERS = {"runtime-gateway", "control-gateway"}
 
 
 def _env_truthy(name: str, default: bool = False) -> bool:
@@ -35,6 +36,18 @@ def _secret() -> bytes:
             "insecure default token secret is forbidden when WAOOOOLAB_STRICT_TOKEN_SECRET=true"
         )
     return value.encode("utf-8")
+
+
+def _allowed_token_issuers() -> set[str]:
+    raw = os.environ.get("DEVICE_HUB_ALLOWED_TOKEN_ISSUERS")
+    if raw is None:
+        raw = os.environ.get("WAOOOOLAB_DEVICE_HUB_ALLOWED_TOKEN_ISSUERS")
+    if raw is None:
+        return set(_DEFAULT_ALLOWED_TOKEN_ISSUERS)
+    parsed = {item.strip() for item in raw.split(",") if item.strip()}
+    if not parsed:
+        return set(_DEFAULT_ALLOWED_TOKEN_ISSUERS)
+    return parsed
 
 
 def _b64url_decode(raw: str) -> bytes:
@@ -113,6 +126,14 @@ def require_claims(*, audience: str, required_scope: str):
             raise HTTPException(
                 status_code=401,
                 detail=f"invalid token claims: unsupported token_use '{token_use}'",
+            )
+        issuer = claims.get("iss")
+        if not isinstance(issuer, str) or not issuer.strip():
+            raise HTTPException(status_code=401, detail="invalid token claims: missing iss")
+        if issuer.strip() not in _allowed_token_issuers():
+            raise HTTPException(
+                status_code=401,
+                detail=f"invalid token claims: unsupported issuer '{issuer.strip()}'",
             )
 
         return claims
