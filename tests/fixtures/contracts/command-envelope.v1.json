@@ -37,6 +37,26 @@
       "type": "string",
       "minLength": 1
     },
+    "scope_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scope_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_contract_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agent_contract_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event_schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
     "run_id": {
       "type": "string",
       "minLength": 1
@@ -52,6 +72,147 @@
     "correlation_id": {
       "type": "string",
       "minLength": 1
+    },
+    "communication_memory_trace": {
+      "type": "object",
+      "required": [
+        "plane",
+        "authority",
+        "memory_scope",
+        "relay_path",
+        "correlation_id"
+      ],
+      "properties": {
+        "plane": {
+          "type": "string",
+          "const": "communication_memory"
+        },
+        "authority": {
+          "type": "string",
+          "enum": [
+            "runtime_orchestrator",
+            "provider_native"
+          ]
+        },
+        "memory_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "user",
+            "agent",
+            "organization"
+          ]
+        },
+        "relay_path": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "trace_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "runtime_state_assembly": {
+      "type": "object",
+      "required": [
+        "plane",
+        "run_id",
+        "task_id",
+        "trace_id",
+        "session_key",
+        "correlation_id",
+        "assembly_order",
+        "pointer_validity",
+        "fallback_strategy",
+        "orchestration_role",
+        "assistant_identity"
+      ],
+      "properties": {
+        "plane": {
+          "type": "string",
+          "const": "runtime_state"
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "trace_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "assembly_order": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "const": "registry_index"
+            },
+            {
+              "const": "session_pointer"
+            },
+            {
+              "const": "event_snapshot"
+            },
+            {
+              "const": "task_snapshot"
+            },
+            {
+              "const": "context_rehydrate"
+            }
+          ],
+          "minItems": 5,
+          "maxItems": 5
+        },
+        "pointer_validity": {
+          "type": "string",
+          "enum": [
+            "strict",
+            "best_effort"
+          ]
+        },
+        "fallback_strategy": {
+          "type": "string",
+          "enum": [
+            "rehydrate_context",
+            "new_thread_with_continuity",
+            "manual_recovery"
+          ]
+        },
+        "orchestration_role": {
+          "type": "string",
+          "enum": [
+            "leader",
+            "worker",
+            "single_agent"
+          ]
+        },
+        "assistant_identity": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
     },
     "idempotency_key": {
       "type": "string",
@@ -84,6 +245,66 @@
       },
       "additionalProperties": false
     },
+    "compensation_spec": {
+      "type": "object",
+      "required": [
+        "steps"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "saga",
+            "best_effort"
+          ]
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "step_id",
+              "action"
+            ],
+            "properties": {
+              "step_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "action": {
+                "type": "string",
+                "minLength": 1
+              },
+              "target": {
+                "type": "string",
+                "minLength": 1
+              },
+              "payload": {
+                "type": "object"
+              },
+              "timeout_ms": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "on_error": {
+                "type": "string",
+                "enum": [
+                  "continue",
+                  "halt"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "ts": {
       "type": "string",
       "format": "date-time"
@@ -92,5 +313,30 @@
       "type": "object"
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "anyOf": [
+          {
+            "required": [
+              "communication_memory_trace"
+            ]
+          },
+          {
+            "required": [
+              "runtime_state_assembly"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "required": [
+          "correlation_id",
+          "communication_memory_trace",
+          "runtime_state_assembly"
+        ]
+      }
+    }
+  ],
   "additionalProperties": false
 }

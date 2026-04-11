@@ -2,8 +2,7 @@ schema_version: approval_policy.v1
 policy_id: baseline.governance.approval-policy-v1
 status: active
 owner: docs-governance
-governance_profile: mvp
-
+governance_profile: standard
 minimum_approver_count: 1
 single_maintainer_mode: true
 review_sla_business_days: 5
@@ -13,4 +12,4 @@ escalation:
   action: escalate-review
 
 notes:
-  - "Bound to DOCS-OPERATING-MODEL-V3 workspace governance authority from openwaoooo."
+  - "Bound to DOCS-OPERATING-MODEL-V4 workspace governance authority from openwaoooo."

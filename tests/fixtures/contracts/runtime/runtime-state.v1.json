@@ -21,6 +21,7 @@
         "retrying",
         "succeeded",
         "failed",
+        "dlq",
         "canceled",
         "timed_out"
       ]

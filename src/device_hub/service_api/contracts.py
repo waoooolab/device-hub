@@ -10,19 +10,33 @@ from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
 
+from ..contracts_catalog_runtime import (
+    PLATFORM_CONTRACTS_DIR_ENV,
+    PLATFORM_CONTRACTS_DIR_ENV_LEGACY,
+    resolve_platform_contracts_root,
+)
+
 
 class ContractValidationError(ValueError):
     """Raised when payload violates canonical contract."""
 
 
 def _candidate_contract_roots() -> list[Path]:
-    explicit = os.environ.get("WAOOOOLAB_PLATFORM_CONTRACTS_DIR")
+    explicit = os.environ.get(PLATFORM_CONTRACTS_DIR_ENV)
+    if explicit is None:
+        explicit = os.environ.get(PLATFORM_CONTRACTS_DIR_ENV_LEGACY)
     roots: list[Path] = []
     if explicit:
-        roots.append(Path(explicit))
+        explicit_path = Path(explicit).expanduser()
+        if explicit_path.name == "jsonschema":
+            roots.append(explicit_path)
+        else:
+            roots.append(explicit_path / "jsonschema")
 
-    here = Path(__file__).resolve()
-    roots.append(here.parents[4] / "platform-contracts" / "jsonschema")
+    package_anchor = Path(__file__).resolve().parents[1] / "__init__.py"
+    roots.append(
+        resolve_platform_contracts_root(anchor_file=str(package_anchor)) / "jsonschema"
+    )
     roots.append(Path.cwd().parent / "platform-contracts" / "jsonschema")
     return roots
 
@@ -35,7 +49,8 @@ def _load_schema(schema_relative_path: str) -> dict[str, Any]:
             return json.loads(path.read_text(encoding="utf-8"))
     raise ContractValidationError(
         "platform-contracts schema not found for "
-        f"{schema_relative_path}; set WAOOOOLAB_PLATFORM_CONTRACTS_DIR"
+        f"{schema_relative_path}; set {PLATFORM_CONTRACTS_DIR_ENV} "
+        f"(legacy alias: {PLATFORM_CONTRACTS_DIR_ENV_LEGACY})"
     )
 
 
