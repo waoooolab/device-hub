@@ -38,12 +38,14 @@ from .support import (
 SERVICE_AUDIENCE = "device-hub"
 DEVICES_WRITE_SCOPE = "devices:write"
 DEVICES_READ_SCOPE = "devices:read"
-TENANT_LEASE_LIMIT_ENV = "WAOOOOLAB_DEVICE_HUB_MAX_ACTIVE_LEASES_PER_TENANT"
-TENANT_LEASE_LIMIT_OVERRIDES_ENV = "WAOOOOLAB_DEVICE_HUB_TENANT_ACTIVE_LEASE_LIMITS"
+TENANT_LEASE_LIMIT_ENV = "DEVICE_HUB_MAX_ACTIVE_LEASES_PER_TENANT"
+TENANT_LEASE_LIMIT_ENV_LEGACY = "WAOOOOLAB_DEVICE_HUB_MAX_ACTIVE_LEASES_PER_TENANT"
+TENANT_LEASE_LIMIT_OVERRIDES_ENV = "DEVICE_HUB_TENANT_ACTIVE_LEASE_LIMITS"
+TENANT_LEASE_LIMIT_OVERRIDES_ENV_LEGACY = "WAOOOOLAB_DEVICE_HUB_TENANT_ACTIVE_LEASE_LIMITS"
 
 
 def _max_active_leases_per_tenant_from_env() -> int | None:
-    raw = os.environ.get(TENANT_LEASE_LIMIT_ENV)
+    raw = _first_env_value(TENANT_LEASE_LIMIT_ENV, TENANT_LEASE_LIMIT_ENV_LEGACY)
     if raw is None:
         return None
     normalized = raw.strip()
@@ -59,7 +61,10 @@ def _max_active_leases_per_tenant_from_env() -> int | None:
 
 
 def _tenant_active_lease_limits_from_env() -> dict[str, int]:
-    raw = os.environ.get(TENANT_LEASE_LIMIT_OVERRIDES_ENV)
+    raw = _first_env_value(
+        TENANT_LEASE_LIMIT_OVERRIDES_ENV,
+        TENANT_LEASE_LIMIT_OVERRIDES_ENV_LEGACY,
+    )
     if raw is None:
         return {}
     normalized = raw.strip()
@@ -83,6 +88,14 @@ def _tenant_active_lease_limits_from_env() -> dict[str, int]:
             )
         limits[tenant_id.strip()] = limit
     return limits
+
+
+def _first_env_value(*keys: str) -> str | None:
+    for key in keys:
+        value = os.environ.get(key)
+        if value is not None:
+            return value
+    return None
 
 
 app = FastAPI(title="device-hub", version="0.1.0")
