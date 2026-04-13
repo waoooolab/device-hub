@@ -22,6 +22,8 @@ _ALLOWED_TOKEN_USES = {"access", "service", "device"}
 _DEFAULT_ALLOWED_TOKEN_ISSUERS = {"runtime-gateway", "control-gateway"}
 STRICT_TOKEN_SECRET_ENV = "DEVICE_HUB_STRICT_TOKEN_SECRET"
 STRICT_TOKEN_SECRET_ENV_LEGACY = "WAOOOOLAB_STRICT_TOKEN_SECRET"
+ALLOWED_TOKEN_ISSUERS_ENV = "DEVICE_HUB_ALLOWED_TOKEN_ISSUERS"
+ALLOWED_TOKEN_ISSUERS_ENV_LEGACY = "WAOOOOLAB_DEVICE_HUB_ALLOWED_TOKEN_ISSUERS"
 
 
 def _env_truthy(name: str, default: bool = False) -> bool:
@@ -45,9 +47,10 @@ def _secret() -> bytes:
 
 
 def _allowed_token_issuers() -> set[str]:
-    raw = os.environ.get("DEVICE_HUB_ALLOWED_TOKEN_ISSUERS")
-    if raw is None:
-        raw = os.environ.get("WAOOOOLAB_DEVICE_HUB_ALLOWED_TOKEN_ISSUERS")
+    raw = _env_value_from_candidates(
+        ALLOWED_TOKEN_ISSUERS_ENV,
+        ALLOWED_TOKEN_ISSUERS_ENV_LEGACY,
+    )
     if raw is None:
         return set(_DEFAULT_ALLOWED_TOKEN_ISSUERS)
     parsed = {item.strip() for item in raw.split(",") if item.strip()}
@@ -56,11 +59,18 @@ def _allowed_token_issuers() -> set[str]:
     return parsed
 
 
-def _env_truthy_from_candidates(*names: str, default: bool = False) -> bool:
+def _env_value_from_candidates(*names: str) -> str | None:
     for name in names:
         raw = os.environ.get(name)
         if raw is not None:
-            return raw.strip().lower() in {"1", "true", "yes", "on"}
+            return raw
+    return None
+
+
+def _env_truthy_from_candidates(*names: str, default: bool = False) -> bool:
+    raw = _env_value_from_candidates(*names)
+    if raw is not None:
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
     return default
 
 

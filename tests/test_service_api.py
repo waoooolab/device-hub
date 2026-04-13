@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from device_hub.service import DeviceHubService
@@ -207,6 +208,60 @@ def test_auth_dependency_accepts_control_gateway_issuer(monkeypatch) -> None:
     )
     claims = dependency(authorization=f"Bearer {issued}")
     assert claims["iss"] == "control-gateway"
+
+
+def test_auth_dependency_allowed_issuer_falls_back_to_legacy_env(monkeypatch) -> None:
+    monkeypatch.delenv("DEVICE_HUB_ALLOWED_TOKEN_ISSUERS", raising=False)
+    monkeypatch.setenv(
+        "WAOOOOLAB_DEVICE_HUB_ALLOWED_TOKEN_ISSUERS",
+        "runtime-gateway,control-gateway",
+    )
+    dependency = auth_module.require_claims(
+        audience="device-hub",
+        required_scope="devices:write",
+    )
+    issued = _issue_token(
+        {
+            "iss": "control-gateway",
+            "sub": "svc:control-gateway",
+            "aud": "device-hub",
+            "tenant_id": "t1",
+            "app_id": "demo-app",
+            "scope": ["devices:write"],
+            "token_use": "service",
+            "trace_id": "trace-device-1",
+        }
+    )
+    claims = dependency(authorization=f"Bearer {issued}")
+    assert claims["iss"] == "control-gateway"
+
+
+def test_auth_dependency_allowed_issuer_prefers_canonical_over_legacy(monkeypatch) -> None:
+    monkeypatch.setenv("DEVICE_HUB_ALLOWED_TOKEN_ISSUERS", "runtime-gateway")
+    monkeypatch.setenv("WAOOOOLAB_DEVICE_HUB_ALLOWED_TOKEN_ISSUERS", "control-gateway")
+    dependency = auth_module.require_claims(
+        audience="device-hub",
+        required_scope="devices:write",
+    )
+    issued = _issue_token(
+        {
+            "iss": "control-gateway",
+            "sub": "svc:control-gateway",
+            "aud": "device-hub",
+            "tenant_id": "t1",
+            "app_id": "demo-app",
+            "scope": ["devices:write"],
+            "token_use": "service",
+            "trace_id": "trace-device-1",
+        }
+    )
+    try:
+        dependency(authorization=f"Bearer {issued}")
+    except HTTPException as exc:
+        assert exc.status_code == 401
+        assert "unsupported issuer" in str(exc.detail)
+    else:
+        raise AssertionError("expected unsupported issuer when canonical allowlist excludes issuer")
 
 
 def test_register_rejects_unsupported_issuer() -> None:
