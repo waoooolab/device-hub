@@ -114,6 +114,20 @@ def test_tenant_active_lease_limits_from_env_rejects_non_positive_limit(monkeypa
         raise AssertionError("expected RuntimeError for non-positive tenant limit")
 
 
+def test_tenant_active_lease_limits_prefers_canonical_env_over_legacy(monkeypatch) -> None:
+    monkeypatch.setenv("DEVICE_HUB_TENANT_ACTIVE_LEASE_LIMITS", '{"t1": 2}')
+    monkeypatch.setenv("WAOOOOLAB_DEVICE_HUB_TENANT_ACTIVE_LEASE_LIMITS", '{"t1": 1}')
+    parsed = app_module._tenant_active_lease_limits_from_env()
+    assert parsed == {"t1": 2}
+
+
+def test_max_active_leases_per_tenant_prefers_canonical_env_over_legacy(monkeypatch) -> None:
+    monkeypatch.setenv("DEVICE_HUB_MAX_ACTIVE_LEASES_PER_TENANT", "7")
+    monkeypatch.setenv("WAOOOOLAB_DEVICE_HUB_MAX_ACTIVE_LEASES_PER_TENANT", "3")
+    value = app_module._max_active_leases_per_tenant_from_env()
+    assert value == 7
+
+
 def test_register_requires_token() -> None:
     client = _setup_test_env()
     response = client.post(
@@ -221,6 +235,21 @@ def test_register_rejects_unsupported_issuer() -> None:
 
 def test_register_rejects_default_secret_in_strict_mode(monkeypatch) -> None:
     monkeypatch.setenv("WAOOOOLAB_STRICT_TOKEN_SECRET", "true")
+    monkeypatch.delenv("RUNTIME_GATEWAY_TOKEN_SECRET", raising=False)
+    client = _setup_test_env()
+    issued = _token(["devices:write"])
+    response = client.post(
+        "/v1/devices/register",
+        json=_command_envelope({"device_id": "d1", "capabilities": ["compute.comfyui.local"]}),
+        headers={"Authorization": f"Bearer {issued}"},
+    )
+    assert response.status_code == 401
+    assert "insecure default token secret" in response.json()["detail"]
+
+
+def test_register_rejects_default_secret_in_canonical_strict_mode(monkeypatch) -> None:
+    monkeypatch.setenv("DEVICE_HUB_STRICT_TOKEN_SECRET", "true")
+    monkeypatch.setenv("WAOOOOLAB_STRICT_TOKEN_SECRET", "false")
     monkeypatch.delenv("RUNTIME_GATEWAY_TOKEN_SECRET", raising=False)
     client = _setup_test_env()
     issued = _token(["devices:write"])

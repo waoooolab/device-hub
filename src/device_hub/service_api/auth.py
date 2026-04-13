@@ -20,6 +20,8 @@ class TokenError(ValueError):
 _DEFAULT_TOKEN_SECRET = "dev-insecure-secret"
 _ALLOWED_TOKEN_USES = {"access", "service", "device"}
 _DEFAULT_ALLOWED_TOKEN_ISSUERS = {"runtime-gateway", "control-gateway"}
+STRICT_TOKEN_SECRET_ENV = "DEVICE_HUB_STRICT_TOKEN_SECRET"
+STRICT_TOKEN_SECRET_ENV_LEGACY = "WAOOOOLAB_STRICT_TOKEN_SECRET"
 
 
 def _env_truthy(name: str, default: bool = False) -> bool:
@@ -31,9 +33,13 @@ def _env_truthy(name: str, default: bool = False) -> bool:
 
 def _secret() -> bytes:
     value = os.environ.get("RUNTIME_GATEWAY_TOKEN_SECRET", _DEFAULT_TOKEN_SECRET)
-    if _env_truthy("WAOOOOLAB_STRICT_TOKEN_SECRET", default=False) and value == _DEFAULT_TOKEN_SECRET:
+    if _env_truthy_from_candidates(
+        STRICT_TOKEN_SECRET_ENV,
+        STRICT_TOKEN_SECRET_ENV_LEGACY,
+        default=False,
+    ) and value == _DEFAULT_TOKEN_SECRET:
         raise TokenError(
-            "insecure default token secret is forbidden when WAOOOOLAB_STRICT_TOKEN_SECRET=true"
+            f"insecure default token secret is forbidden when {STRICT_TOKEN_SECRET_ENV}=true"
         )
     return value.encode("utf-8")
 
@@ -48,6 +54,14 @@ def _allowed_token_issuers() -> set[str]:
     if not parsed:
         return set(_DEFAULT_ALLOWED_TOKEN_ISSUERS)
     return parsed
+
+
+def _env_truthy_from_candidates(*names: str, default: bool = False) -> bool:
+    for name in names:
+        raw = os.environ.get(name)
+        if raw is not None:
+            return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return default
 
 
 def _b64url_decode(raw: str) -> bytes:
