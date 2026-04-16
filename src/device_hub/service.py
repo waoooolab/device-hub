@@ -9,7 +9,11 @@ from uuid import uuid4
 
 from .code_terms import normalize_optional_code_term
 from .devices.pairing import PairingManager, PairingRequest
-from .devices.registry import DeviceRecord, DeviceRegistry
+from .devices.registry import (
+    DeviceRecord,
+    DeviceRegistry,
+    is_valid_device_status,
+)
 from .resources.capability_registry import CapabilityRegistry
 from .routing.device_router import choose_device
 from .state_store import DeviceHubStateStore
@@ -112,6 +116,8 @@ class DeviceHubService:
         ):
             estimated_cost_usd = float(estimated_cost_usd_raw)
         status = DeviceHubService._normalize_optional_str(value.get("status")) or "offline"
+        if not is_valid_device_status(status):
+            status = "offline"
         paired = value.get("paired") is True
         last_seen_at = DeviceHubService._normalize_optional_str(value.get("last_seen_at"))
         if last_seen_at is None:
