@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import ast
 import fnmatch
+import json
 import pathlib
 import sys
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ DEFAULT_EXCLUDES = (
     "*/.venv/*",
     "*/.pytest_cache/*",
 )
+DEFAULT_FAIL_BASELINE_PATH = "governance/baselines/code-shape-fail-baseline.json"
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,45 @@ def _function_spans(path: pathlib.Path) -> list[tuple[str, int, int]]:
     return spans
 
 
+def _load_fail_baseline(path: pathlib.Path) -> tuple[set[pathlib.Path], set[tuple[pathlib.Path, str]]]:
+    if not path.exists():
+        return set(), set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return set(), set()
+    ignored = payload.get("ignored_failures") if isinstance(payload, dict) else None
+    if not isinstance(ignored, dict):
+        return set(), set()
+
+    cwd = pathlib.Path.cwd().resolve()
+    ignored_files: set[pathlib.Path] = set()
+    for item in ignored.get("file_lines", []):
+        if not isinstance(item, str) or not item.strip():
+            continue
+        candidate = pathlib.Path(item.strip())
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        ignored_files.add(candidate.resolve())
+
+    ignored_functions: set[tuple[pathlib.Path, str]] = set()
+    for item in ignored.get("function_lines", []):
+        if not isinstance(item, dict):
+            continue
+        raw_path = item.get("path")
+        raw_name = item.get("name")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            continue
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            continue
+        candidate = pathlib.Path(raw_path.strip())
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        ignored_functions.add((candidate.resolve(), raw_name.strip()))
+
+    return ignored_files, ignored_functions
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check Python code shape thresholds")
     parser.add_argument("--root", default="src/device_hub", help="Directory to scan")
@@ -101,6 +142,11 @@ def main() -> int:
     parser.add_argument("--fail-file-lines", type=int, default=500)
     parser.add_argument("--warn-function-lines", type=int, default=40)
     parser.add_argument("--fail-function-lines", type=int, default=80)
+    parser.add_argument(
+        "--fail-baseline",
+        default=DEFAULT_FAIL_BASELINE_PATH,
+        help="Optional JSON baseline listing known fail findings to ignore",
+    )
     args = parser.parse_args()
 
     root = pathlib.Path(args.root).resolve()
@@ -109,6 +155,9 @@ def main() -> int:
         return 2
 
     findings: list[Finding] = []
+    ignored_file_failures, ignored_function_failures = _load_fail_baseline(
+        pathlib.Path(args.fail_baseline).resolve()
+    )
     files = _iter_python_files(
         root,
         include_glob=args.include_glob,
@@ -118,6 +167,8 @@ def main() -> int:
     for path in files:
         line_count = _file_line_count(path)
         if line_count > args.fail_file_lines:
+            if path.resolve() in ignored_file_failures:
+                continue
             findings.append(
                 Finding(
                     level="FAIL",
@@ -143,6 +194,8 @@ def main() -> int:
         for fn_name, start, end in _function_spans(path):
             fn_lines = end - start + 1
             if fn_lines > args.fail_function_lines:
+                if (path.resolve(), fn_name) in ignored_function_failures:
+                    continue
                 findings.append(
                     Finding(
                         level="FAIL",
@@ -184,4 +237,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

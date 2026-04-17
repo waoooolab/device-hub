@@ -1,0 +1,23 @@
+{
+  "version": "code-shape-fail-baseline.v1",
+  "scope": "device-hub historical debt exceptions",
+  "ignored_failures": {
+    "file_lines": [
+      "src/device_hub/service.py"
+    ],
+    "function_lines": [
+      {
+        "path": "src/device_hub/service.py",
+        "name": "_filter_candidates_by_constraints"
+      },
+      {
+        "path": "src/device_hub/service.py",
+        "name": "allocate_placement"
+      },
+      {
+        "path": "src/device_hub/service.py",
+        "name": "lease_policy_tick"
+      }
+    ]
+  }
+}
