@@ -29,7 +29,8 @@
         "device.lease.released",
         "device.lease.expired",
         "device.lease.renewed"
-      ]
+      ],
+      "$comment": "SSOT source pointer: jsonschema/runtime/device-route-event.v1.json#/properties/event_type/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
     },
     "tenant_id": {
       "type": "string",
@@ -91,7 +92,8 @@
                 "lease_released",
                 "lease_expired",
                 "lease_renewed"
-              ]
+              ],
+              "$comment": "SSOT source pointer: jsonschema/runtime/device-route-event.v1.json#/properties/payload/properties/decision/properties/outcome/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
             },
             "device_id": {
               "type": "string",
@@ -183,7 +185,8 @@
                     "enum": [
                       "local",
                       "cloud"
-                    ]
+                    ],
+                    "$comment": "SSOT source pointer: jsonschema/runtime/device-route-event.v1.json#/properties/payload/properties/decision/properties/placement_audit/properties/candidate_execution_sites/items/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
                   },
                   "uniqueItems": true
                 },
@@ -196,7 +199,8 @@
                   "enum": [
                     "local",
                     "cloud"
-                  ]
+                  ],
+                  "$comment": "SSOT source pointer: jsonschema/runtime/device-route-event.v1.json#/properties/payload/properties/decision/properties/placement_audit/properties/selected_execution_site/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
                 },
                 "selected_region": {
                   "type": "string",
@@ -229,7 +233,8 @@
                     "tenant_context",
                     "capability_context",
                     "replay"
-                  ]
+                  ],
+                  "$comment": "SSOT source pointer: jsonschema/runtime/device-route-event.v1.json#/properties/payload/properties/decision/properties/placement_audit/properties/failure_domain/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
                 }
               },
               "additionalProperties": false

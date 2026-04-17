@@ -92,7 +92,8 @@
           "enum": [
             "runtime_orchestrator",
             "provider_native"
-          ]
+          ],
+          "$comment": "SSOT source pointer: jsonschema/command-envelope.v1.json#/properties/communication_memory_trace/properties/authority/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
         },
         "memory_scope": {
           "type": "string",
@@ -101,7 +102,8 @@
             "user",
             "agent",
             "organization"
-          ]
+          ],
+          "$comment": "SSOT source pointer: jsonschema/command-envelope.v1.json#/properties/communication_memory_trace/properties/memory_scope/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
         },
         "relay_path": {
           "type": "array",
@@ -189,7 +191,8 @@
           "enum": [
             "strict",
             "best_effort"
-          ]
+          ],
+          "$comment": "SSOT source pointer: jsonschema/command-envelope.v1.json#/properties/runtime_state_assembly/properties/pointer_validity/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
         },
         "fallback_strategy": {
           "type": "string",
@@ -197,7 +200,8 @@
             "rehydrate_context",
             "new_thread_with_continuity",
             "manual_recovery"
-          ]
+          ],
+          "$comment": "SSOT source pointer: jsonschema/command-envelope.v1.json#/properties/runtime_state_assembly/properties/fallback_strategy/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
         },
         "orchestration_role": {
           "type": "string",
@@ -205,7 +209,8 @@
             "leader",
             "worker",
             "single_agent"
-          ]
+          ],
+          "$comment": "SSOT source pointer: jsonschema/command-envelope.v1.json#/properties/runtime_state_assembly/properties/orchestration_role/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
         },
         "assistant_identity": {
           "type": "string",
@@ -240,7 +245,8 @@
           "enum": [
             "fixed",
             "exponential"
-          ]
+          ],
+          "$comment": "SSOT source pointer: jsonschema/command-envelope.v1.json#/properties/retry_policy/properties/strategy/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
         }
       },
       "additionalProperties": false
@@ -260,7 +266,8 @@
           "enum": [
             "saga",
             "best_effort"
-          ]
+          ],
+          "$comment": "SSOT source pointer: jsonschema/command-envelope.v1.json#/properties/compensation_spec/properties/strategy/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
         },
         "steps": {
           "type": "array",
@@ -296,7 +303,8 @@
                 "enum": [
                   "continue",
                   "halt"
-                ]
+                ],
+                "$comment": "SSOT source pointer: jsonschema/command-envelope.v1.json#/properties/compensation_spec/properties/steps/items/properties/on_error/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
               }
             },
             "additionalProperties": false

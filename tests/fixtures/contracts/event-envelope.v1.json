@@ -3,34 +3,107 @@
   "$id": "https://waoooolab.dev/contracts/event-envelope.v1.json",
   "title": "EventEnvelopeV1",
   "type": "object",
-  "required": ["event_id", "event_type", "tenant_id", "app_id", "session_key", "trace_id", "correlation_id", "ts", "payload"],
+  "required": [
+    "event_id",
+    "event_type",
+    "tenant_id",
+    "app_id",
+    "session_key",
+    "trace_id",
+    "correlation_id",
+    "ts",
+    "payload"
+  ],
   "properties": {
-    "event_id": {"type": "string"},
-    "event_type": {"type": "string"},
-    "tenant_id": {"type": "string"},
-    "app_id": {"type": "string"},
-    "session_key": {"type": "string"},
-    "scope_id": {"type": "string", "minLength": 1},
-    "scope_type": {"type": "string", "minLength": 1},
-    "task_contract_version": {"type": "string", "minLength": 1},
-    "agent_contract_version": {"type": "string", "minLength": 1},
-    "event_schema_version": {"type": "string", "minLength": 1},
-    "trace_id": {"type": "string"},
-    "correlation_id": {"type": "string"},
+    "event_id": {
+      "type": "string"
+    },
+    "event_type": {
+      "type": "string"
+    },
+    "tenant_id": {
+      "type": "string"
+    },
+    "app_id": {
+      "type": "string"
+    },
+    "session_key": {
+      "type": "string"
+    },
+    "scope_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scope_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_contract_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agent_contract_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event_schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trace_id": {
+      "type": "string"
+    },
+    "correlation_id": {
+      "type": "string"
+    },
     "communication_memory_trace": {
       "type": "object",
-      "required": ["plane", "authority", "memory_scope", "relay_path", "correlation_id"],
+      "required": [
+        "plane",
+        "authority",
+        "memory_scope",
+        "relay_path",
+        "correlation_id"
+      ],
       "properties": {
-        "plane": {"type": "string", "const": "communication_memory"},
-        "authority": {"type": "string", "enum": ["runtime_orchestrator", "provider_native"]},
-        "memory_scope": {"type": "string", "enum": ["session", "user", "agent", "organization"]},
+        "plane": {
+          "type": "string",
+          "const": "communication_memory"
+        },
+        "authority": {
+          "type": "string",
+          "enum": [
+            "runtime_orchestrator",
+            "provider_native"
+          ],
+          "$comment": "SSOT source pointer: jsonschema/event-envelope.v1.json#/properties/communication_memory_trace/properties/authority/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
+        },
+        "memory_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "user",
+            "agent",
+            "organization"
+          ],
+          "$comment": "SSOT source pointer: jsonschema/event-envelope.v1.json#/properties/communication_memory_trace/properties/memory_scope/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
+        },
         "relay_path": {
           "type": "array",
           "minItems": 1,
-          "items": {"type": "string", "minLength": 1}
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "correlation_id": {"type": "string", "minLength": 1},
-        "trace_ref": {"type": "string", "minLength": 1}
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "trace_ref": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": false
     },
@@ -50,47 +123,114 @@
         "assistant_identity"
       ],
       "properties": {
-        "plane": {"type": "string", "const": "runtime_state"},
-        "run_id": {"type": "string", "minLength": 1},
-        "task_id": {"type": "string", "minLength": 1},
-        "trace_id": {"type": "string", "minLength": 1},
-        "session_key": {"type": "string", "minLength": 1},
-        "correlation_id": {"type": "string", "minLength": 1},
+        "plane": {
+          "type": "string",
+          "const": "runtime_state"
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "trace_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "assembly_order": {
           "type": "array",
           "prefixItems": [
-            {"const": "registry_index"},
-            {"const": "session_pointer"},
-            {"const": "event_snapshot"},
-            {"const": "task_snapshot"},
-            {"const": "context_rehydrate"}
+            {
+              "const": "registry_index"
+            },
+            {
+              "const": "session_pointer"
+            },
+            {
+              "const": "event_snapshot"
+            },
+            {
+              "const": "task_snapshot"
+            },
+            {
+              "const": "context_rehydrate"
+            }
           ],
           "minItems": 5,
           "maxItems": 5
         },
-        "pointer_validity": {"type": "string", "enum": ["strict", "best_effort"]},
+        "pointer_validity": {
+          "type": "string",
+          "enum": [
+            "strict",
+            "best_effort"
+          ],
+          "$comment": "SSOT source pointer: jsonschema/event-envelope.v1.json#/properties/runtime_state_assembly/properties/pointer_validity/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
+        },
         "fallback_strategy": {
           "type": "string",
-          "enum": ["rehydrate_context", "new_thread_with_continuity", "manual_recovery"]
+          "enum": [
+            "rehydrate_context",
+            "new_thread_with_continuity",
+            "manual_recovery"
+          ],
+          "$comment": "SSOT source pointer: jsonschema/event-envelope.v1.json#/properties/runtime_state_assembly/properties/fallback_strategy/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
         },
-        "orchestration_role": {"type": "string", "enum": ["leader", "worker", "single_agent"]},
-        "assistant_identity": {"type": "string", "minLength": 1}
+        "orchestration_role": {
+          "type": "string",
+          "enum": [
+            "leader",
+            "worker",
+            "single_agent"
+          ],
+          "$comment": "SSOT source pointer: jsonschema/event-envelope.v1.json#/properties/runtime_state_assembly/properties/orchestration_role/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
+        },
+        "assistant_identity": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": false
     },
-    "ts": {"type": "string", "format": "date-time"},
-    "payload": {"type": "object"}
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "object"
+    }
   },
   "allOf": [
     {
       "if": {
         "anyOf": [
-          {"required": ["communication_memory_trace"]},
-          {"required": ["runtime_state_assembly"]}
+          {
+            "required": [
+              "communication_memory_trace"
+            ]
+          },
+          {
+            "required": [
+              "runtime_state_assembly"
+            ]
+          }
         ]
       },
       "then": {
-        "required": ["communication_memory_trace", "runtime_state_assembly"]
+        "required": [
+          "communication_memory_trace",
+          "runtime_state_assembly"
+        ]
       }
     }
   ],

@@ -15,7 +15,8 @@
       "enum": [
         "control",
         "compute"
-      ]
+      ],
+      "$comment": "SSOT source pointer: jsonschema/runtime/execution-profile.v1.json#/properties/execution_mode/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
     },
     "inference_target": {
       "type": "string",
@@ -23,7 +24,8 @@
         "hosted_api",
         "local_endpoint",
         "none"
-      ]
+      ],
+      "$comment": "SSOT source pointer: jsonschema/runtime/execution-profile.v1.json#/properties/inference_target/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
     },
     "resource_class": {
       "type": "string",
@@ -31,7 +33,8 @@
         "cpu",
         "llm_api",
         "gpu"
-      ]
+      ],
+      "$comment": "SSOT source pointer: jsonschema/runtime/execution-profile.v1.json#/properties/resource_class/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
     },
     "placement_constraints": {
       "type": "object",
@@ -54,7 +57,8 @@
             "low",
             "balanced",
             "high"
-          ]
+          ],
+          "$comment": "SSOT source pointer: jsonschema/runtime/execution-profile.v1.json#/properties/placement_constraints/properties/cost_tier/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
         },
         "prefer_local": {
           "type": "boolean"
@@ -111,7 +115,8 @@
             "enum": [
               "none",
               "local_endpoint"
-            ]
+            ],
+            "$comment": "SSOT source pointer: jsonschema/runtime/execution-profile.v1.json#/allOf[0]/then/properties/inference_target/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
           }
         }
       }
@@ -155,7 +160,8 @@
             "enum": [
               "hosted_api",
               "local_endpoint"
-            ]
+            ],
+            "$comment": "SSOT source pointer: jsonschema/runtime/execution-profile.v1.json#/allOf[2]/then/properties/inference_target/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
           },
           "execution_mode": {
             "const": "control"

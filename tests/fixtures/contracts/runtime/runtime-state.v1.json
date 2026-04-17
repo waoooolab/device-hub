@@ -24,7 +24,8 @@
         "dlq",
         "canceled",
         "timed_out"
-      ]
+      ],
+      "$comment": "SSOT source pointer: jsonschema/runtime/runtime-state.v1.json#/properties/run_status/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
     },
     "task_status": {
       "type": "string",
@@ -39,7 +40,8 @@
         "failed",
         "canceled",
         "timed_out"
-      ]
+      ],
+      "$comment": "SSOT source pointer: jsonschema/runtime/runtime-state.v1.json#/properties/task_status/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
     },
     "device_status": {
       "type": "string",
@@ -50,7 +52,8 @@
         "degraded",
         "offline",
         "revoked"
-      ]
+      ],
+      "$comment": "SSOT source pointer: jsonschema/runtime/runtime-state.v1.json#/properties/device_status/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
     }
   },
   "additionalProperties": false

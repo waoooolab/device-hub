@@ -103,7 +103,8 @@
         "service",
         "device",
         "exchange"
-      ]
+      ],
+      "$comment": "SSOT source pointer: jsonschema/auth/token-claims.v1.json#/properties/token_use/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
     },
     "principal_type": {
       "type": "string",
@@ -111,7 +112,8 @@
         "user",
         "service",
         "device"
-      ]
+      ],
+      "$comment": "SSOT source pointer: jsonschema/auth/token-claims.v1.json#/properties/principal_type/enum. Mirror owners must align with openwaoooo/packages/contracts and openwaoooo/packages/contracts-py when applicable."
     },
     "client_id": {
       "type": "string",
