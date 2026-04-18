@@ -1,0 +1,20 @@
+schema_version: contract_authority_slot_binding.v1
+binding_artifact_path: governance/baselines/contract-authority-slot-binding.yaml
+authority_mode: hybrid_mirror
+authority_repo: waoooolab/device-hub
+authority_paths:
+  - src/
+  - tests/
+  - README.md
+  - AGENTS.md
+domain_mapping:
+  runtime: src/device_hub/
+  control: src/device_hub/service_api/
+  surfaces:
+    api: src/device_hub/service_api/app.py
+    registry: src/device_hub/devices/registry.py
+    routing: src/device_hub/routing/device_router.py
+sync_policy:
+  sync_mode: hybrid_mirror
+  sync_window_sla_hours: 168
+  mirrored_at: "2026-04-18T12:00:00Z"

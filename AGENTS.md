@@ -1,3 +1,6 @@
+Status: active
+Owner: device-hub-team
+
 # device-hub AGENTS.md
 
 ## Service Description

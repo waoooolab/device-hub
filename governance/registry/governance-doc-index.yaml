@@ -1,0 +1,26 @@
+schema_version: governance_doc_index.v1
+status: active
+owner: docs-governance
+governance_profile: standard
+
+documents:
+  - artifact_id: device-hub.readme
+    path: README.md
+    type: documentation
+    domain: general
+    state: active
+    maintenance_mode: manual
+
+  - artifact_id: device-hub.agents
+    path: AGENTS.md
+    type: reference
+    domain: agent
+    state: active
+    maintenance_mode: manual
+
+  - artifact_id: device-hub.clients.readme
+    path: clients/README.md
+    type: reference
+    domain: clients
+    state: active
+    maintenance_mode: manual

@@ -1,3 +1,6 @@
+Status: active
+Owner: device-hub-team
+
 # Node Agents
 
 This directory contains baseline node-agent client adapters owned by `device-hub`.

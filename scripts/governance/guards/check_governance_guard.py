@@ -856,7 +856,73 @@ def _check_authority_slot_binding() -> list[str]:
     return findings
 
 
+def _check_registry_sync() -> list[str]:
+    findings: list[str] = []
+    docs = _collect_doc_index()
+    indexed_paths: set[str] = set()
+    for item in docs:
+        rel = str(item.get("path", "")).strip()
+        if not rel:
+            aid = str(item.get("artifact_id", "<unknown>"))
+            findings.append(f"{aid}: missing path")
+            continue
+        indexed_paths.add(rel)
+        if not (ROOT / rel).exists():
+            findings.append(f"indexed path not found: {rel}")
+
+    # Discover all markdown files under ROOT that are governance-relevant.
+    # Guards scope: README files and docs/ tree.
+    candidates: set[Path] = set()
+    if ROOT_README.exists():
+        candidates.add(ROOT_README)
+    if DOCS_README.exists():
+        candidates.add(DOCS_README)
+    if GOVERNANCE_README.exists():
+        candidates.add(GOVERNANCE_README)
+    for p in (ROOT / "docs").rglob("*.md"):
+        if "/archive/" not in p.relative_to(ROOT / "docs").as_posix():
+            candidates.add(p)
+    for path in candidates:
+        rel = path.relative_to(ROOT).as_posix()
+        if rel not in indexed_paths:
+            findings.append(f"document not indexed: {rel}")
+    return findings
+
+
+def _check_report_file_naming() -> list[str]:
+    findings: list[str] = []
+    base = _resolve_report_root()
+    if not base.exists():
+        return []
+    for path in _md_files(base):
+        rel = path.relative_to(ROOT).as_posix()
+        if rel.endswith("/README.md"):
+            continue
+        # Check shard naming: execution reports use WORKING-EXECUTION-LOG, boards use TASK-BOARD, etc.
+        # Non-shard reports (e.g. README, index) are exempt.
+        # Board shards already validated by board patterns; report shards use ISSUES-REPORT pattern.
+        if "/execution/boards/" in rel or "/execution/logs/" in rel or "/execution/reports/" in rel:
+            # Allow index files and canonical pointers; only shard files are validated here.
+            pass
+        # Additional gate: report files with year-date tokens must match shard pattern or be legacy-marked.
+        import re as _re
+        shard_year_re = _re.compile(r"\d{4}-\d{2}-\d{2}")
+        base_name = path.name
+        if shard_year_re.search(base_name):
+            is_shard = any(
+                pat.match(rel) for pat in (
+                    BOARD_SHARD_RES.get(rel.split("/")[0] + "/" + rel.split("/")[1], _re.compile("$^"))
+                    for rel in [rel]
+                )
+            )
+            if not is_shard and "archive" not in rel and "legacy" not in rel.lower():
+                findings.append(f"{rel}: report file with date token may need shard naming or archive/legacy marker")
+    return findings
+
+
 CHECKS: dict[str, Callable[[], list[str]]] = {
+    "guard.registry.sync": _check_registry_sync,
+    "guard.docs.report-file-naming": _check_report_file_naming,
     "guard.docs.one-active-authority-per-domain": _check_one_active_authority_per_domain,
     "guard.docs.lifecycle-transition": _check_lifecycle_transition,
     "guard.docs.execution-to-archive-expiry": _check_execution_to_archive_expiry,
