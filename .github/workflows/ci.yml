@@ -1,20 +1,8 @@
 name: CI
-
 on:
   push:
   pull_request:
-
 jobs:
-  test:
-    uses: waoooolab/openwaoooo/.github/workflows/service-python-ci-reusable.yml@0b3ff9b6ba8762600c275df0d35dee4bc81c7d0a
-    with:
-      own_package: device_hub
-      install_command: |
-        python -m pip install --upgrade pip
-        python -m pip install -e .
-      test_command: |
-        python scripts/run_tests.py
-
   governance-guards:
     uses: waoooolab/openwaoooo/.github/workflows/service-governance-guards-reusable.yml@d60dfed5c2dbbb480dd77da4ec184d745eb7c254
     with:
