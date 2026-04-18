@@ -1,3 +1,6 @@
+Status: active
+Owner: device-hub-team
+
 # device-hub
 [![CI](https://github.com/waoooolab/device-hub/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/waoooolab/device-hub/actions/workflows/ci.yml)
 
