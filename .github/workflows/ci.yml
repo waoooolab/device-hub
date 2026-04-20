@@ -20,6 +20,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
+          python -m pip install pytest
 
       - name: Boundary Import Guard
         run: |
