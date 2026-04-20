@@ -6,16 +6,84 @@ on:
 
 jobs:
   test:
-    uses: waoooolab/openwaoooo/.github/workflows/service-python-ci-reusable.yml@41f7ef50d7642f57ec658044e6c19246547e892c
-    with:
-      own_package: device_hub
-      install_command: |
-        python -m pip install --upgrade pip
-        python -m pip install -e .
-      test_command: |
-        python scripts/run_tests.py
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Boundary Import Guard
+        run: |
+          if [ -f scripts/check_boundary_imports.py ]; then
+            python scripts/check_boundary_imports.py --own-package device_hub
+          else
+            echo "skip boundary import guard: script not found"
+          fi
+
+      - name: Code Shape Guard
+        run: |
+          if [ -f scripts/check_code_shape.py ]; then
+            python scripts/check_code_shape.py \
+              --warn-file-lines 300 \
+              --fail-file-lines 500 \
+              --warn-function-lines 40 \
+              --fail-function-lines 80
+          else
+            echo "skip code shape guard: script not found"
+          fi
+
+      - name: Run Tests
+        run: |
+          python scripts/run_tests.py
 
   governance-guards:
-    uses: waoooolab/openwaoooo/.github/workflows/service-governance-guards-reusable.yml@41f7ef50d7642f57ec658044e6c19246547e892c
-    with:
-      governance_profile: standard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install governance guard deps
+        run: python -m pip install --upgrade pip pyyaml
+
+      - name: Run Governance Guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          guards=(
+            "guard.docs.one-active-authority-per-domain"
+            "guard.docs.lifecycle-transition"
+            "guard.docs.execution-to-archive-expiry"
+            "guard.docs.supersede-link"
+            "guard.docs.report-set-completeness"
+            "guard.registry.sync"
+            "guard.contract.source-trace"
+            "guard.docs.report-file-naming"
+            "guard.docs.log-entry-timestamp"
+            "guard.docs.report-required-fields"
+            "guard.docs.authority-reference-only"
+            "guard.docs.semantic-duplication"
+            "guard.docs.readme-boundary"
+            "guard.docs.cross-layer-coupling"
+            "guard.docs.authoring-scaffold"
+            "guard.docs.lifecycle-header-state-lint"
+            "guard.contract.hybrid-mirror-sync-freshness"
+            "guard.docs.generated-artifact-drift"
+            "guard.contract.authority-slot-binding"
+          )
+          for guard_id in "${guards[@]}"; do
+            python scripts/governance/guards/check_governance_guard.py --guard-id "$guard_id"
+          done
