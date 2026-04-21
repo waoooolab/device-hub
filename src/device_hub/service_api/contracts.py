@@ -31,6 +31,8 @@ def _candidate_contract_roots() -> list[Path]:
         if explicit_path.name == "jsonschema":
             roots.append(explicit_path)
         else:
+            # Support direct fixture roots that already contain schema files.
+            roots.append(explicit_path)
             roots.append(explicit_path / "jsonschema")
 
     package_anchor = Path(__file__).resolve().parents[1] / "__init__.py"
